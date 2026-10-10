@@ -12,7 +12,10 @@ extends RefCounted
 ##   between them drop away. The pieces carry the cliff's rock (or earth, on
 ##   gentle ground) onto the top in a band below a grass fringe. Outer
 ##   corners are rounded into quarter circles.
-## - Faces run down every cliff from the band, rock on full cliffs and earth
+## - Full cliffs that step back one at a time (terraces) are HGSS-style
+##   banks: the face slopes down across the whole cell at the cliff's foot
+##   (the world makes that cell impassable), wrapping round outer corners.
+## - Other faces run straight down every cliff from the band, rock on full cliffs and earth
 ##   on half cliffs, round the curve of outer corners, with a soft shadow on
 ##   the ground at their foot (not behind cliffs facing away from the
 ##   camera, where it'd be hidden anyway).
@@ -248,8 +251,12 @@ func _cell(c: Vector2i) -> void:
 	for q in GridWorld.DIAGONAL:
 		var p: Array = _piece(c, q)
 		var piece: int = p[0]
-		if piece == Piece.OUTER and raised:
+		if piece == Piece.OUTER and raised and _rounded(c, q):
 			_round_corner(c, q, top, base + Piece.OUTER)
+		elif piece == Piece.OUTER and raised:
+			faces.append(_quarter(c, q, top, base + Piece.OUTER, false, false))
+			if _is_bank(c, Vector2i(q.x, 0)) and _is_bank(c, Vector2i(0, q.y)):
+				_bank_corner(c, q, top)
 		elif piece == Piece.CENTER:
 			if raised:
 				faces.append(_quarter(c, q, top, top_tex, false, true))
@@ -259,8 +266,9 @@ func _cell(c: Vector2i) -> void:
 			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), base + piece, p[1], false))
 	_sides(c, raised)
 
-## The straight faces down a cell's exposed sides, half a side at a time:
-## the half beside a rounded corner is left to the curve.
+## The faces down a cell's exposed sides: a bank sloping across the cell
+## below, or straight down half a side at a time (the half beside a rounded
+## corner is left to the curve).
 func _sides(c: Vector2i, raised: bool) -> void:
 	if not exposed.has(c):
 		return
@@ -273,15 +281,63 @@ func _sides(c: Vector2i, raised: bool) -> void:
 		var o := Vector2(d)
 		var t := Vector2(-d.y, d.x)
 		var mid := center + o * 0.5
+		if raised and _is_bank(c, d):
+			_bank(mid - t * 0.5, mid + t * 0.5, o, solid[i], bottom, tex)
+			continue
 		for half in [-1, 1]:
 			var q := Vector2i(d) + Vector2i(t * half)
-			if raised and _piece(c, q)[0] == Piece.OUTER:
+			if raised and _rounded(c, q):
 				continue
 			var a := mid if half == 1 else mid - t * 0.5
 			var b := mid + t * 0.5 if half == 1 else mid
 			_face(a, b, o, solid[i], bottom, tex)
 			if not water and o.y > -0.3:
 				_shadow(a, b, o, bottom)
+
+## Whether c's cliff on side d is an HGSS-style bank: a block high, with a
+## bank at its foot.
+func _is_bank(c: Vector2i, d: Vector2i) -> bool:
+	var n := c + d
+	var hn := _height(n)
+	return hn >= 0 and _height(c) - hn == 2 and world.get_cell_item(Vector3i(n.x, hn / 2, n.y)) == T.BANK
+
+
+## Whether c's quarter toward q is an outer corner turned in a curve (both
+## its cliffs vertical).
+func _rounded(c: Vector2i, q: Vector2i) -> bool:
+	return _piece(c, q)[0] == Piece.OUTER and not _is_bank(c, Vector2i(q.x, 0)) \
+		and not _is_bank(c, Vector2i(0, q.y))
+
+
+## A bank: the cliff's face sloping from the top edge a..b, facing o, down
+## across the whole cell below to its far edge.
+func _bank(a: Vector2, b: Vector2, o: Vector2, top: float, bottom: float, tex: int) -> void:
+	var pts := [_at(a, top), _at(b, top), _at(b + o, bottom), _at(a + o, bottom)]
+	var u0 := _along(a, o)
+	var u1 := _along(b, o)
+	var n: Vector3 = (Vector3(o.x, 0, o.y) * (top - bottom) + Vector3.UP).normalized()
+	faces.append([pts, n, tex, [Vector2(u0, 0), Vector2(u1, 0), Vector2(u1, top - bottom), Vector2(u0, top - bottom)]])
+
+
+## Where two banks meet at an outer corner: the slope wrapping round the
+## corner, across the diagonal cell, from the corner's top down to that
+## cell's far edges.
+func _bank_corner(c: Vector2i, q: Vector2i, top: float) -> void:
+	var bottom := (_height(c) - 2) / 2.0
+	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
+	var p := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(q) * 0.5
+	var ends := [p + Vector2(q.x, 0), p + Vector2(q), p + Vector2(0, q.y)]
+	# Strata ring the corner: down the slope from the corner's top to the
+	# far edges, along them round it.
+	var drop := top - bottom
+	for k in 2:
+		var e0: Vector2 = ends[k]
+		var e1: Vector2 = ends[k + 1]
+		var pts := [_at(p, top), _at(e0, bottom), _at(e1, bottom)]
+		var n: Vector3 = (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalized()
+		faces.append([pts, n if n.y > 0.0 else -n, tex,
+			[Vector2(k + 0.5, 0), Vector2(k, drop), Vector2(k + 1, drop)]])
+
 
 ## A rounded outer corner, Pokemon style: the quarter keeps its square
 ## sides, with the corner itself turned in a slight curve (CORNER_RADIUS),

@@ -63,6 +63,9 @@ enum Tile {
 	UPPER_HALF_HILL_RAMP,
 	# Props sunk half a block, for half-height ground.
 	TREE_LOW, SNOW_TREE_LOW, BOULDER_LOW, BUSH_LOW, TALL_GRASS_LOW,
+	# The foot of an HGSS-style cliff, whose face slopes down across this
+	# cell (drawn by TerrainMesh): solid, and otherwise invisible.
+	BANK,
 }
 
 ## Prop tiles, in the order of their sprites in assets/props.png.
@@ -194,7 +197,7 @@ func generate(new_seed: int) -> void:
 	spawn_cell = map_size / 2
 
 	var heights := _shape_heights(terrain)
-	_build_terrain(heights)
+	_build_terrain(terrain, heights)
 
 	var reserved := {}
 	for x in range(spawn_cell.x - 2, spawn_cell.x + 3):
@@ -319,7 +322,7 @@ func _height_at(heights: PackedInt32Array, cell: Vector2i) -> int:
 ## Stacks blocks to each cell's height, then cuts plateaus' outside corners
 ## diagonally and breaks the odd cliff with a ramp. (TerrainMesh draws the
 ## cliffs: earth faces on gentle ground, rock where the terrain is cliffy.)
-func _build_terrain(heights: PackedInt32Array) -> void:
+func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 	for z in map_size.y:
 		for x in map_size.x:
 			var h := heights[z * map_size.x + x]
@@ -334,11 +337,49 @@ func _build_terrain(heights: PackedInt32Array) -> void:
 			var cell := Vector2i(x, z)
 			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
-			_wedge_corner(cell, heights)
+			# Banks turn their own corners.
+			if not terrain.has_banks(x, z):
+				_wedge_corner(cell, heights)
 	for z in map_size.y:
 		for x in map_size.x:
 			if heights[z * map_size.x + x] >= 0:
 				_maybe_ramp(Vector2i(x, z), heights)
+	for z in map_size.y:
+		for x in map_size.x:
+			if terrain.has_banks(x, z):
+				_place_banks(Vector2i(x, z), heights)
+
+
+## Turns a cell's one-block cliffs into HGSS-style banks: the face slopes
+## down across the cell at its foot, which can't be walked on. At an outer
+## corner between two banks, the diagonal cell takes the corner of the
+## slope. (Ramps already in place keep their way up.)
+func _place_banks(cell: Vector2i, heights: PackedInt32Array) -> void:
+	var h := _height_at(heights, cell)
+	if h < 2 or get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y)) not in [Tile.FULL, Tile.ROCK]:
+		return
+	var banked: Array[Vector2i] = []
+	for d in ORTHOGONAL:
+		if _bank_foot(cell + d, h - 2, heights):
+			set_cell_item(Vector3i(cell.x + d.x, (h - 2) / 2, cell.y + d.y), Tile.BANK)
+			banked.append(d)
+	for d in DIAGONAL:
+		if Vector2i(d.x, 0) in banked and Vector2i(0, d.y) in banked and _bank_foot(cell + d, h - 2, heights):
+			set_cell_item(Vector3i(cell.x + d.x, (h - 2) / 2, cell.y + d.y), Tile.BANK)
+
+
+## Whether a cell at the foot of a cliff can take a bank: plain ground
+## (raised or not) at foot height, with nothing on it.
+func _bank_foot(foot: Vector2i, foot_h: int, heights: PackedInt32Array) -> bool:
+	if _height_at(heights, foot) != foot_h:
+		return false
+	var layer := foot_h / 2
+	var item := get_cell_item(Vector3i(foot.x, layer, foot.y))
+	if item != INVALID_CELL_ITEM and item != Tile.BANK:
+		return false
+	if foot_h == 0:
+		return ground_tile(foot) in [Tile.GROUND, Tile.FLOWERS]
+	return get_cell_item(Vector3i(foot.x, layer - 1, foot.y)) in [Tile.FULL, Tile.ROCK]
 
 
 ## Full blocks up to a height in steps, topped with a half block on odd
@@ -417,7 +458,8 @@ func _ramp_piece(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> Ar
 		return []
 	var layer := h / 2
 	if h % 2 == 0:
-		if get_cell_item(Vector3i(cell.x, layer, cell.y)) != INVALID_CELL_ITEM:
+		# (A ramp can replace a bank at a cliff's foot.)
+		if get_cell_item(Vector3i(cell.x, layer, cell.y)) not in [INVALID_CELL_ITEM, Tile.BANK]:
 			return []
 		return [Tile.HILL_RAMP if rise == 2 else Tile.HALF_HILL_RAMP, layer]
 	if get_cell_item(Vector3i(cell.x, layer, cell.y)) != Tile.HALF \
@@ -621,6 +663,14 @@ func _unshape(cell: Vector2i, heights: PackedInt32Array) -> void:
 				var rise := 2 if item == Tile.HILL_RAMP else 1
 				if _height_at(heights, cell + _up_dir(cell, layer)) != h + rise:
 					set_cell_item(pos, Tile.HALF if item == Tile.UPPER_HALF_HILL_RAMP else INVALID_CELL_ITEM)
+			Tile.BANK:
+				# Only at the foot of a cliff a block high.
+				var still := false
+				for d in ORTHOGONAL + DIAGONAL:
+					if _height_at(heights, cell + d) == h + 2:
+						still = true
+				if not still or layer != h / 2:
+					set_cell_item(pos, INVALID_CELL_ITEM)
 
 
 ## Joins the pocket containing u to reachable ground next to it, if it
@@ -635,6 +685,28 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 		if hr < 0:
 			continue
 		var ri := r.y * map_size.x + r.x
+		# A bank between u and reached ground (the cliff top beyond it, or
+		# the ground below it): swap it for a ramp.
+		if hr % 2 == 0 and not reserved.has(r) and get_cell_item(Vector3i(r.x, hr / 2, r.y)) == Tile.BANK:
+			var beyond := r + d
+			var hb := _height_at(heights, beyond)
+			if hb >= 0 and reached[beyond.y * map_size.x + beyond.x]:
+				var dir := Vector2i.ZERO
+				if hu == hr and hb == hr + 2:
+					dir = d
+				elif hu == hr + 2 and hb == hr:
+					dir = -d
+				var piece := _ramp_piece(r, dir, heights) if dir != Vector2i.ZERO else []
+				if not piece.is_empty():
+					set_slope(r, piece[1], piece[0], dir)
+					surface[ri] = _top_surface(r)
+					return true
+			if hu == hr:
+				# No ramp fits: take the bank away, so u's ground reaches the
+				# cliff (which turns vertical there) and can climb it next time.
+				set_cell_item(Vector3i(r.x, hr / 2, r.y), INVALID_CELL_ITEM)
+				surface[ri] = _top_surface(r)
+				return true
 		if reached[ri] and hu != hr and absi(hu - hr) <= 2:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
@@ -1170,7 +1242,7 @@ static func _is_diag_ramp(tile: int) -> bool:
 
 
 static func _is_solid_scenery(tile: int) -> bool:
-	return tile in CLEARABLE or tile in [Tile.WATER, Tile.WATERFALL, Tile.BUILDING, Tile.BUILDING_DOOR]
+	return tile in CLEARABLE or tile in [Tile.WATER, Tile.WATERFALL, Tile.BUILDING, Tile.BUILDING_DOOR, Tile.BANK]
 
 
 static func _is_thin(tile: int) -> bool:
@@ -1292,7 +1364,7 @@ func _build_mesh_library() -> MeshLibrary:
 	lib.set_item_name(Tile.WATER_BRIDGE, "WaterBridge")
 	lib.set_item_mesh(Tile.WATER_BRIDGE, _build_mesh(_bridge_faces(), wood, mat, _build_mesh(water_box, wood, water_mat)))
 
-	for tile in [Tile.BUILDING, Tile.BUILDING_DOOR]:
+	for tile in [Tile.BUILDING, Tile.BUILDING_DOOR, Tile.BANK]:
 		lib.create_item(tile)
 		lib.set_item_name(tile, Tile.keys()[tile].capitalize())
 

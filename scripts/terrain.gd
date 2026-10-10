@@ -59,6 +59,13 @@ func cliff_tiers(x: float, z: float) -> int:
 	return 3 if sheer > 0.25 else (2 if sheer > -0.1 else 1)
 
 
+## Whether one-block cliffs here are HGSS-style banks, sloping across the
+## cell at their foot, rather than vertical: where cliffs step back one at
+## a time (terraces). Stacked walls stay vertical.
+func has_banks(x: float, z: float) -> bool:
+	return is_cliffy(x, z) and cliff_tiers(x, z) == 1
+
+
 ## 0..1 chance of a tree.
 func forest(x: float, z: float) -> float:
 	return clampf(_forest.get_noise_2d(x, z) * 2.4 - 0.15, 0.0, 0.8)

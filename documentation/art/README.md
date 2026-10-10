@@ -138,7 +138,10 @@ overworld tutorial:
 Terrain heights come in half blocks. Gentle ground has **half cliffs**
 (half a block tall); cliffy ground has **full cliffs** (a block tall), which
 either step back a block at a time or stack straight up into walls two or
-three blocks tall. `scripts/terrain_mesh.gd` draws the raised terrain
+three blocks tall. Full cliffs that step back are **HGSS-style banks**: the
+face slopes down across the whole cell at the cliff's foot (which can't be
+walked on), so it shows a full tile of rock. Stacked walls, half cliffs and
+cliffs into water stay vertical. `scripts/terrain_mesh.gd` draws the raised terrain
 (outer corners turned in a slight curve) and dresses every cliff from
 these tiles, HGSS style: the cliff's rock starts on the top surface, in a band
 along the edge below a wavy grass fringe, and runs on down the face.
