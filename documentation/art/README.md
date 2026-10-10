@@ -174,7 +174,8 @@ along the edge below a wavy grass fringe, and runs on down the face.
   horizontal strata. Its top row carries on from the band above.
 - `ROCK_TOP`: bare rock seen from above, topping high ground.
 
-Ramps up the cliffs are drawn the same way: a grassy slope with the edge
+Ramps climb half a block per cell (about 27 degrees): a half cliff in one
+cell, a full cliff over two. They're drawn the same way: a grassy slope with the edge
 piece's band running down each exposed side and the face cut to the slope
 below it.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff

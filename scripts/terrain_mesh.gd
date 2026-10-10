@@ -469,6 +469,10 @@ func _ramp(c: Vector2i) -> void:
 		var nh := _height(c + Vector2i(o))
 		if nh == -99:
 			continue
+		# A matching ramp alongside: one wide ramp, no edge between them.
+		var beside := c + Vector2i(o)
+		if world.get_cell_item(Vector3i(beside.x, layer, beside.y)) == tile and world._up_dir(beside, layer) == Vector2i(up):
+			continue
 		var floor_h := maxf(nh / 2.0, WATER_SURFACE if nh < 0 else 0.0)
 		if floor_h >= base + rise:
 			continue

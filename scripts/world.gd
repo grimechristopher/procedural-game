@@ -433,17 +433,17 @@ func _wedge_column(cell: Vector2i, low: int, high: int, solid: Vector2i) -> void
 func _maybe_ramp(cell: Vector2i, heights: PackedInt32Array) -> void:
 	for d in ORTHOGONAL:
 		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < RAMP_CHANCE:
-			var piece := _ramp_piece(cell, d, heights)
-			if not piece.is_empty():
-				set_slope(cell, piece[1], piece[0], d)
+			if _place_ramp(_ramp_pieces(cell, d, heights), d):
 				return
 
 
-## The ramp, as [tile, layer], that would climb from cell up the cliff
-## toward dir, from level ground onto level ground a half or whole block
-## higher; or [] if none fits. A half block becomes a ramp up from half
-## height; nothing climbs a whole block from half height.
-func _ramp_piece(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> Array:
+## The ramp that would climb from cell up the cliff toward dir, from level
+## ground onto level ground a half or whole block higher, as pieces
+## [cell, tile, layer]; or [] if none fits. Ramps climb half a block per
+## cell: a half cliff in one cell (a half block becomes a ramp up from half
+## height), a full cliff over two, cell and the one behind it. Nothing
+## climbs a whole block from half height.
+func _ramp_pieces(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserved := {}) -> Array:
 	var h := _height_at(heights, cell)
 	var up := _height_at(heights, cell + dir)
 	var rise := up - h
@@ -454,18 +454,37 @@ func _ramp_piece(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> Ar
 	var above := cell + dir
 	if get_cell_item(Vector3i(above.x, (up - 1) / 2, above.y)) not in [Tile.FULL, Tile.ROCK, Tile.HALF]:
 		return []  # the top of the cliff is a wedge or otherwise not walkable
-	if h == 0 and ground_tile(cell) != Tile.GROUND and ground_tile(cell) != Tile.FLOWERS:
-		return []
 	var layer := h / 2
-	if h % 2 == 0:
-		# (A ramp can replace a bank at a cliff's foot.)
-		if get_cell_item(Vector3i(cell.x, layer, cell.y)) not in [INVALID_CELL_ITEM, Tile.BANK]:
+	if h % 2 == 1:
+		if reserved.has(cell) or get_cell_item(Vector3i(cell.x, layer, cell.y)) != Tile.HALF \
+				or get_cell_item(Vector3i(cell.x, layer + 1, cell.y)) != INVALID_CELL_ITEM:
 			return []
-		return [Tile.HILL_RAMP if rise == 2 else Tile.HALF_HILL_RAMP, layer]
-	if get_cell_item(Vector3i(cell.x, layer, cell.y)) != Tile.HALF \
-			or get_cell_item(Vector3i(cell.x, layer + 1, cell.y)) != INVALID_CELL_ITEM:
+		return [[cell, Tile.UPPER_HALF_HILL_RAMP, layer]]
+	if not _ramp_room(cell, layer, h, reserved):
 		return []
-	return [Tile.UPPER_HALF_HILL_RAMP, layer]
+	if rise == 1:
+		return [[cell, Tile.HALF_HILL_RAMP, layer]]
+	var out := cell - dir
+	if _height_at(heights, out - dir) != h or not _ramp_room(out, layer, h, reserved):
+		return []
+	return [[cell, Tile.UPPER_HALF_HILL_RAMP, layer], [out, Tile.HALF_HILL_RAMP, layer]]
+
+
+## Whether a ramp can start on a cell's ground (a bank there gives way).
+func _ramp_room(cell: Vector2i, layer: int, h: int, reserved: Dictionary) -> bool:
+	if reserved.has(cell) or get_cell_item(Vector3i(cell.x, layer, cell.y)) not in [INVALID_CELL_ITEM, Tile.BANK]:
+		return false
+	return h > 0 or ground_tile(cell) == Tile.GROUND or ground_tile(cell) == Tile.FLOWERS
+
+
+## Lays a ramp's pieces, rising toward dir; false if there are none.
+func _place_ramp(pieces: Array, dir: Vector2i, surface := []) -> bool:
+	for piece in pieces:
+		var c: Vector2i = piece[0]
+		set_slope(c, piece[2], piece[1], dir)
+		if not surface.is_empty():
+			surface[c.y * map_size.x + c.x] = _top_surface(c)
+	return not pieces.is_empty()
 
 
 ## Forests, boulders, bushes and tall grass on level ground, away from
@@ -660,9 +679,15 @@ func _unshape(cell: Vector2i, heights: PackedInt32Array) -> void:
 			Tile.HALF_WEDGE:
 				set_cell_item(pos, Tile.HALF)
 			Tile.HILL_RAMP, Tile.HALF_HILL_RAMP, Tile.UPPER_HALF_HILL_RAMP:
-				var rise := 2 if item == Tile.HILL_RAMP else 1
-				if _height_at(heights, cell + _up_dir(cell, layer)) != h + rise:
-					set_cell_item(pos, Tile.HALF if item == Tile.UPPER_HALF_HILL_RAMP else INVALID_CELL_ITEM)
+				# Still leading up a cliff (a full cliff's lower half leads on
+				# to its upper half)?
+				var up := cell + _up_dir(cell, layer)
+				var rise := 2 if item == Tile.HILL_RAMP or (item == Tile.UPPER_HALF_HILL_RAMP and h % 2 == 0) else 1
+				var leads := _height_at(heights, up) == h + rise
+				if item == Tile.HALF_HILL_RAMP and get_cell_item(Vector3i(up.x, layer, up.y)) == Tile.UPPER_HALF_HILL_RAMP:
+					leads = true
+				if not leads:
+					set_cell_item(pos, Tile.HALF if item == Tile.UPPER_HALF_HILL_RAMP and h % 2 == 1 else INVALID_CELL_ITEM)
 			Tile.BANK:
 				# Only at the foot of a cliff a block high.
 				var still := false
@@ -696,10 +721,7 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 					dir = d
 				elif hu == hr + 2 and hb == hr:
 					dir = -d
-				var piece := _ramp_piece(r, dir, heights) if dir != Vector2i.ZERO else []
-				if not piece.is_empty():
-					set_slope(r, piece[1], piece[0], dir)
-					surface[ri] = _top_surface(r)
+				if dir != Vector2i.ZERO and _place_ramp(_ramp_pieces(r, dir, heights, reserved), dir, surface):
 					return true
 			if hu == hr:
 				# No ramp fits: take the bank away, so u's ground reaches the
@@ -710,10 +732,7 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 		if reached[ri] and hu != hr and absi(hu - hr) <= 2:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
-			var piece := _ramp_piece(low, dir, heights)
-			if not reserved.has(low) and not piece.is_empty():
-				set_slope(low, piece[1], piece[0], dir)
-				surface[low.y * map_size.x + low.x] = _top_surface(low)
+			if _place_ramp(_ramp_pieces(low, dir, heights, reserved), dir, surface):
 				return true
 		elif reached[ri] and absi(hu - hr) > 2:
 			var low := u if hu < hr else r
@@ -735,36 +754,35 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 
 
 ## Climbs a wall of stacked cliffs from low toward dir by cutting a
-## corridor into the plateau: one ramp per block, each cut cell a block
-## lower than the next, so the way up runs back into the cliff like a path
-## cut into its side.
+## corridor into the plateau: ramps climbing half a block per cell, each
+## cut cell half a block lower than the next, so the way up runs back into
+## the cliff like a path cut into its side.
 func _cut_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserved: Dictionary,
 		surface: Array) -> bool:
 	var h := _height_at(heights, low)
 	var top := _height_at(heights, low + dir)
-	var blocks := (top - h) / 2
-	if h < 0 or h % 2 == 1 or (top - h) % 2 == 1 or blocks < 2 or _height_at(heights, low - dir) != h:
+	var steps := top - h
+	if h < 0 or h % 2 == 1 or steps % 2 == 1 or steps < 4 or _height_at(heights, low - dir) != h:
 		return false
-	if reserved.has(low) or get_cell_item(Vector3i(low.x, h / 2, low.y)) != INVALID_CELL_ITEM:
-		return false
-	if h == 0 and ground_tile(low) != Tile.GROUND and ground_tile(low) != Tile.FLOWERS:
+	if not _ramp_room(low, h / 2, h, reserved) or get_cell_item(Vector3i(low.x, h / 2, low.y)) != INVALID_CELL_ITEM:
 		return false
 	# The corridor and its landing must be plain plateau.
-	for i in range(1, blocks + 1):
+	for i in range(1, steps + 1):
 		var c := low + dir * i
 		if reserved.has(c) or _height_at(heights, c) != top \
 				or get_cell_item(Vector3i(c.x, top / 2 - 1, c.y)) not in [Tile.FULL, Tile.ROCK]:
 			return false
-	for i in range(1, blocks):
+	for i in range(1, steps):
 		var c := low + dir * i
 		for layer in range(0, TOP_LAYER + 1):
 			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
-		_stack_column(c, h + 2 * i)
-		heights[c.y * map_size.x + c.x] = h + 2 * i
-	for i in range(0, blocks):
+		_stack_column(c, h + i)
+		heights[c.y * map_size.x + c.x] = h + i
+	for i in range(0, steps):
 		var c := low + dir * i
-		set_slope(c, h / 2 + i, Tile.HILL_RAMP, dir)
-	for i in range(-1, blocks + 1):
+		var step := h + i
+		set_slope(c, step / 2, Tile.HALF_HILL_RAMP if step % 2 == 0 else Tile.UPPER_HALF_HILL_RAMP, dir)
+	for i in range(-1, steps + 1):
 		for side in [Vector2i(dir.y, dir.x), Vector2i(-dir.y, -dir.x), Vector2i.ZERO]:
 			var n: Vector2i = low + dir * i + side
 			if _height_at(heights, n) < 0:
