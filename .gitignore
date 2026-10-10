@@ -4,3 +4,7 @@ CLAUDE.md
 
 # Sidecar (Claude working docs, notes, plans)
 sidecar/
+
+# Godot
+.godot/
+*.tmp
