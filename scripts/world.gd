@@ -230,8 +230,11 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
 			e = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
 			if terrain.is_cliffy(x, z):
-				_max_drop[i] = 2 * terrain.cliff_tiers(x, z)
-				heights[i] = -1 if e < 0.0 else 2 * mini(floori(e), MAX_HEIGHT)
+				# Rounded to whole stacks of cliffs, so where they stack the
+				# ground rises in tall walls with wide shelves between.
+				var tiers := terrain.cliff_tiers(x, z)
+				_max_drop[i] = 2 * tiers
+				heights[i] = -1 if e < 0.0 else 2 * mini(floori(e / tiers) * tiers, MAX_HEIGHT)
 			else:
 				_max_drop[i] = 1
 				heights[i] = -1 if e < 0.0 else mini(floori(e * 2.0), MAX_HEIGHT * 2)
@@ -628,6 +631,11 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 				set_slope(low, piece[1], piece[0], dir)
 				surface[low.y * map_size.x + low.x] = _top_surface(low)
 				return true
+		elif reached[ri] and absi(hu - hr) > 2:
+			var low := u if hu < hr else r
+			var dir := d if hu < hr else -d
+			if _cut_ramps(low, dir, heights, reserved, surface):
+				return true
 		elif not reached[ri] and hr == hu and surface[ri].is_empty() and not reserved.has(r):
 			# r is blocked; clear it if reachable ground at our level lies beyond.
 			var prop_at := Vector3i(r.x, (hr + 1) / 2, r.y)
@@ -640,6 +648,47 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 					surface[ri] = _top_surface(r)
 					return true
 	return false
+
+
+## Climbs a wall of stacked cliffs from low toward dir by cutting a
+## corridor into the plateau: one ramp per block, each cut cell a block
+## lower than the next, so the way up runs back into the cliff like a path
+## cut into its side.
+func _cut_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserved: Dictionary,
+		surface: Array) -> bool:
+	var h := _height_at(heights, low)
+	var top := _height_at(heights, low + dir)
+	var blocks := (top - h) / 2
+	if h < 0 or h % 2 == 1 or (top - h) % 2 == 1 or blocks < 2 or _height_at(heights, low - dir) != h:
+		return false
+	if reserved.has(low) or get_cell_item(Vector3i(low.x, h / 2, low.y)) != INVALID_CELL_ITEM:
+		return false
+	if h == 0 and ground_tile(low) != Tile.GROUND and ground_tile(low) != Tile.FLOWERS:
+		return false
+	# The corridor and its landing must be plain plateau.
+	for i in range(1, blocks + 1):
+		var c := low + dir * i
+		if reserved.has(c) or _height_at(heights, c) != top \
+				or get_cell_item(Vector3i(c.x, top / 2 - 1, c.y)) not in [Tile.FULL, Tile.ROCK]:
+			return false
+	for i in range(1, blocks):
+		var c := low + dir * i
+		for layer in range(0, TOP_LAYER + 1):
+			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+		_stack_column(c, h + 2 * i)
+		heights[c.y * map_size.x + c.x] = h + 2 * i
+	for i in range(0, blocks):
+		var c := low + dir * i
+		set_slope(c, h / 2 + i, Tile.HILL_RAMP, dir)
+	for i in range(-1, blocks + 1):
+		for side in [Vector2i(dir.y, dir.x), Vector2i(-dir.y, -dir.x), Vector2i.ZERO]:
+			var n: Vector2i = low + dir * i + side
+			if _height_at(heights, n) < 0:
+				continue
+			if side != Vector2i.ZERO:
+				_unshape(n, heights)
+			surface[n.y * map_size.x + n.x] = _top_surface(n)
+	return true
 
 
 ## Lays out a field of farmland just south of the spawn plaza, with the

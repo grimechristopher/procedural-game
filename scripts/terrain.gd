@@ -35,7 +35,7 @@ func _init(seed_value: int) -> void:
 
 ## Continuous elevation in blocks; below 0 is water.
 func elevation(x: float, z: float) -> float:
-	var hills := _hills.get_noise_2d(x, z) * 2.6 + 1.3
+	var hills := _hills.get_noise_2d(x, z) * 3.6 + 1.8
 	return hills + mountains(x, z)
 
 
