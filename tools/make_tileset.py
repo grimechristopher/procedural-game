@@ -1,8 +1,9 @@
 """Draws the 16x16 pixel-art tileset atlas used by the GridMap blocks.
 
-The style follows Pokemon HeartGold/SoulSilver: a small, bright palette and
+The style follows the concept art in documentation/concept: a muted
+natural palette (olive grass, grey rock, brown dirt), with HGSS-style
 ordered, hand-placed patterns (grass tufts, pebbles, paving) rather than
-noise, with cliff-like block sides.
+noise, and cliff-like block sides.
 
 Run from the repo root:  python3 tools/make_tileset.py
 Writes assets/tileset.png. The tile order must match GridWorld.Tex.
@@ -12,28 +13,28 @@ from PIL import Image
 T = 16
 COLS, ROWS = 4, 3
 
-GRASS = (120, 200, 88)
-GRASS_DARK = (72, 152, 64)
-GRASS_LIGHT = (176, 232, 128)
-GRASS_EDGE = (40, 104, 48)
+GRASS = (118, 150, 74)
+GRASS_DARK = (84, 116, 58)
+GRASS_LIGHT = (150, 178, 96)
+GRASS_EDGE = (56, 82, 44)
 
-ROCK = (208, 168, 112)
-ROCK_MID = (176, 128, 80)
-ROCK_DARK = (120, 80, 48)
-ROCK_LIGHT = (232, 200, 144)
+ROCK = (138, 138, 140)
+ROCK_MID = (106, 106, 112)
+ROCK_DARK = (64, 64, 72)
+ROCK_LIGHT = (172, 172, 174)
 
-SAND = (232, 208, 152)
-SAND_DARK = (200, 168, 112)
-SAND_LIGHT = (248, 232, 184)
+SAND = (170, 138, 96)
+SAND_DARK = (138, 108, 72)
+SAND_LIGHT = (194, 164, 120)
 
-STONE = (200, 200, 212)
-STONE_LIGHT = (236, 236, 244)
-STONE_DARK = (152, 152, 172)
-GROUT = (112, 112, 136)
+STONE = (172, 164, 150)
+STONE_LIGHT = (204, 196, 180)
+STONE_DARK = (138, 130, 118)
+GROUT = (96, 90, 82)
 
-WOOD = (208, 144, 80)
-WOOD_LIGHT = (232, 176, 104)
-WOOD_DARK = (128, 80, 40)
+WOOD = (138, 96, 60)
+WOOD_LIGHT = (164, 118, 76)
+WOOD_DARK = (80, 54, 34)
 
 SOIL = (176, 120, 72)
 SOIL_FURROW = (120, 76, 44)

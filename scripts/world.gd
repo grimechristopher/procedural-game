@@ -42,7 +42,19 @@ enum Tile {
 	# Farming: ground you can till, its tilled and watered states, and the
 	# solid objects you trade with.
 	FARMLAND, TILLED, TILLED_WET, SHIPPING_BIN, SHOP_STALL,
+	# Water sits a quarter block below the ground. A water bridge is a plank
+	# deck at ground level over water; a waterfall is a solid block of water.
+	WATER, WATER_BRIDGE, WATERFALL,
+	# Props: sprites leaned back to face the fixed camera. All solid except
+	# tall grass, which you walk through.
+	TREE, SNOW_TREE, BOULDER, BUSH, TALL_GRASS,
 }
+
+## Prop tiles, in the order of their sprites in assets/props.png.
+const PROP_SPRITES := [Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH, Tile.TALL_GRASS]
+const PROP_SPRITE_SIZE := Vector2i(32, 48)
+## Props lean back by the camera's pitch so they face it square on.
+const PROP_LEAN_DEGREES := 40.0
 
 ## Gameplay tags per tile. Systems like farming ask what a cell is tagged
 ## with (cell_tags / has_tag) rather than checking for particular tiles.
@@ -52,6 +64,9 @@ const TAGS := {
 	Tile.TILLED_WET: [&"tilled", &"watered"],
 	Tile.SHIPPING_BIN: [&"shipping_bin"],
 	Tile.SHOP_STALL: [&"shop"],
+	Tile.WATER: [&"water"],
+	Tile.WATERFALL: [&"water"],
+	Tile.TALL_GRASS: [&"tall_grass"],
 }
 
 ## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
@@ -62,6 +77,9 @@ const TEX_ROWS := 3
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")
+const WATER_SHADER := preload("res://assets/water.gdshader")
+const WATER_TEXTURE := preload("res://assets/water.png")
+const PROPS_TEXTURE := preload("res://assets/props.png")
 
 const GROUND_LAYER := -1
 const TOP_LAYER := 3
@@ -71,9 +89,9 @@ const BRIDGE_THICKNESS := 0.15
 const EPS := 0.001
 const NO_MOVE := -999
 
-@export var map_size := Vector2i(28, 28)
-@export var platform_count := 10
-@export var bridge_count := 3
+@export var map_size := Vector2i(36, 36)
+@export var platform_count := 16
+@export var bridge_count := 4
 @export var map_seed := 1
 
 var spawn_cell := Vector2i.ZERO
@@ -109,6 +127,7 @@ func generate(new_seed: int) -> void:
 	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
 	_place_farm(reserved, approaches)
+	_place_river(rng, reserved)
 	var placed := 0
 	for attempt in platform_count * 10:
 		if placed >= platform_count:
@@ -124,6 +143,7 @@ func generate(new_seed: int) -> void:
 	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
 		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
 			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
+	_place_scenery(rng, reserved)
 	_bury_covered_blocks()
 
 
@@ -141,6 +161,110 @@ func _place_farm(reserved: Dictionary, approaches: Array[Vector2i]) -> void:
 	set_slope(spawn_cell + Vector2i(2, -1), 0, Tile.SHIPPING_BIN, Vector2i.LEFT)
 	set_slope(spawn_cell + Vector2i(2, 1), 0, Tile.SHOP_STALL, Vector2i.LEFT)
 	approaches.append(Vector2i(spawn_cell.x, field.position.y - 1))
+
+
+## Runs a two-wide river down the map, north to south, well clear of the
+## farm: in through a waterfall in the north wall, out through the south
+## wall, with two plank bridges across it.
+func _place_river(rng: RandomNumberGenerator, reserved: Dictionary) -> void:
+	var lo := 3 if rng.randf() < 0.5 else map_size.x - 9
+	var hi := lo + 4
+	var x := rng.randi_range(lo, hi)
+	var rows: Array[int] = []
+	for z in map_size.y:
+		if z > 1 and z < map_size.y - 2 and rng.randf() < 0.35:
+			x = clampi(x + (1 if rng.randf() < 0.5 else -1), lo, hi)
+		rows.append(x)
+		for dx in 2:
+			var cell := Vector2i(x + dx, z)
+			set_ground(cell, Tile.WATER)
+			var top := Tile.WATERFALL if z == 0 else INVALID_CELL_ITEM
+			set_cell_item(Vector3i(cell.x, 0, z), top)
+			set_cell_item(Vector3i(cell.x, 1, z), top)
+			for nx in range(cell.x - 1, cell.x + 2):
+				for nz in range(z - 1, z + 2):
+					reserved[Vector2i(nx, nz)] = true
+
+	var first := rng.randi_range(4, map_size.y / 2 - 3)
+	for z in [first, rng.randi_range(first + 7, map_size.y - 5)]:
+		for dx in 2:
+			set_slope(Vector2i(rows[z] + dx, z), GROUND_LAYER, Tile.WATER_BRIDGE, Vector2i.RIGHT)
+
+
+## Scatters forest clumps (mostly near the walls), boulders, bushes and
+## patches of tall grass over open grass. Anything solid is only kept if
+## every bit of ground that was reachable before still is.
+func _place_scenery(rng: RandomNumberGenerator, reserved: Dictionary) -> void:
+	var reach := _ground_reachable()
+	var groups := []
+	for i in 14:
+		var near_wall := rng.randf() < 0.6
+		var center := Vector2i(rng.randi_range(1, map_size.x - 2), rng.randi_range(1, map_size.y - 2))
+		if near_wall:
+			var side := rng.randi() % 4
+			var depth := rng.randi_range(1, 3)
+			center = [Vector2i(depth, center.y), Vector2i(map_size.x - 1 - depth, center.y),
+				Vector2i(center.x, depth), Vector2i(center.x, map_size.y - 1 - depth)][side]
+		groups.append([center, 2, 0.6, Tile.TREE])
+	for i in 8:
+		var center := Vector2i(rng.randi_range(2, map_size.x - 3), rng.randi_range(2, map_size.y - 3))
+		groups.append([center, 0, 1.0, Tile.BOULDER if rng.randf() < 0.5 else Tile.BUSH])
+
+	for group in groups:
+		var placed: Array[Vector2i] = []
+		var center: Vector2i = group[0]
+		var radius: int = group[1]
+		for x in range(center.x - radius, center.x + radius + 1):
+			for z in range(center.y - radius, center.y + radius + 1):
+				var cell := Vector2i(x, z)
+				if _is_open_grass(cell, reserved) and rng.randf() < group[2]:
+					set_cell_item(Vector3i(x, 0, z), group[3])
+					placed.append(cell)
+		if placed.is_empty():
+			continue
+		var after := _ground_reachable()
+		var lost := 0
+		for cell in placed:
+			if reach.has(cell):
+				lost += 1
+		if after.size() == reach.size() - lost:
+			reach = after
+		else:
+			for cell in placed:
+				set_cell_item(Vector3i(cell.x, 0, cell.y), INVALID_CELL_ITEM)
+
+	for i in 7:
+		var center := Vector2i(rng.randi_range(2, map_size.x - 3), rng.randi_range(2, map_size.y - 3))
+		for x in range(center.x - 2, center.x + 3):
+			for z in range(center.y - 1, center.y + 2):
+				if _is_open_grass(Vector2i(x, z), {}) and rng.randf() < 0.75:
+					set_cell_item(Vector3i(x, 0, z), Tile.TALL_GRASS)
+
+
+## Grass with nothing on it, away from the walls and anything reserved.
+func _is_open_grass(cell: Vector2i, reserved: Dictionary) -> bool:
+	if cell.x < 1 or cell.y < 1 or cell.x >= map_size.x - 1 or cell.y >= map_size.y - 1 or reserved.has(cell):
+		return false
+	var ground := ground_tile(cell)
+	if ground != Tile.GROUND and ground != Tile.FLOWERS:
+		return false
+	for layer in range(0, TOP_LAYER + 1):
+		if get_cell_item(Vector3i(cell.x, layer, cell.y)) != INVALID_CELL_ITEM:
+			return false
+	return true
+
+
+## Ground cells reachable from spawn by walking at ground level.
+func _ground_reachable() -> Dictionary:
+	var seen := { spawn_cell: true }
+	var frontier: Array[Vector2i] = [spawn_cell]
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_back()
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			if not seen.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
+				seen[c + d] = true
+				frontier.append(c + d)
+	return seen
 
 
 ## Sets the ground-layer tile of a cell.
@@ -518,12 +642,13 @@ func _surface(cell: Vector2i, layer: int) -> Dictionary:
 	var pos := Vector3i(cell.x, layer, cell.y)
 	var item := get_cell_item(pos)
 	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item) or _is_thin(item) \
-			or item == Tile.SHIPPING_BIN or item == Tile.SHOP_STALL:
+			or item == Tile.SHIPPING_BIN or item == Tile.SHOP_STALL or _is_solid_scenery(item) \
+			or item == Tile.TALL_GRASS:
 		return {}
 	var top := _span(item, layer).y
 	for above in range(layer + 1, TOP_LAYER + 1):
 		var other := get_cell_item(Vector3i(cell.x, above, cell.y))
-		if other == INVALID_CELL_ITEM or _is_thin(other):
+		if other == INVALID_CELL_ITEM or _is_thin(other) or other == Tile.TALL_GRASS:
 			continue
 		if _span(other, above).x < top + HEADROOM - EPS:
 			return {}
@@ -673,6 +798,10 @@ static func _is_diag_ramp(tile: int) -> bool:
 	return tile == Tile.DIAG_RAMP or tile == Tile.HALF_DIAG_RAMP
 
 
+static func _is_solid_scenery(tile: int) -> bool:
+	return tile in [Tile.WATER, Tile.WATERFALL, Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH]
+
+
 static func _is_thin(tile: int) -> bool:
 	return tile in [Tile.WALL, Tile.WALL_CORNER, Tile.DOORWAY, Tile.FENCE, Tile.FENCE_CORNER, Tile.PILLAR]
 
@@ -684,7 +813,8 @@ static func _span(tile: int, layer: int) -> Vector2:
 				Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER, Tile.HALF_DIAG_RAMP, \
 				Tile.FENCE, Tile.FENCE_CORNER:
 			return Vector2(layer, layer + 0.5)
-		Tile.BRIDGE: return Vector2(layer + 1.0 - BRIDGE_THICKNESS, layer + 1.0)
+		Tile.BRIDGE, Tile.WATER_BRIDGE: return Vector2(layer + 1.0 - BRIDGE_THICKNESS, layer + 1.0)
+		Tile.WATER: return Vector2(layer, layer + 0.75)
 	return Vector2(layer, layer + 1.0)
 
 
@@ -763,10 +893,35 @@ func _build_mesh_library() -> MeshLibrary:
 		lib.create_item(item[0])
 		lib.set_item_name(item[0], item[1])
 		lib.set_item_mesh(item[0], _build_mesh(item[2], item[3], mat))
+
+	var water_mat := ShaderMaterial.new()
+	water_mat.shader = WATER_SHADER
+	water_mat.set_shader_parameter("water", WATER_TEXTURE)
+	var water_box := _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.75, 0.5))
+	for item in [[Tile.WATER, "Water", water_box], [Tile.WATERFALL, "Waterfall", full_box]]:
+		lib.create_item(item[0])
+		lib.set_item_name(item[0], item[1])
+		lib.set_item_mesh(item[0], _build_mesh(item[2], wood, water_mat))
+	lib.create_item(Tile.WATER_BRIDGE)
+	lib.set_item_name(Tile.WATER_BRIDGE, "WaterBridge")
+	lib.set_item_mesh(Tile.WATER_BRIDGE, _build_mesh(_bridge_faces(), wood, mat, _build_mesh(water_box, wood, water_mat)))
+
+	var props_mat := StandardMaterial3D.new()
+	props_mat.albedo_texture = PROPS_TEXTURE
+	props_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	props_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	props_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
+	props_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+	for i in PROP_SPRITES.size():
+		var tile: int = PROP_SPRITES[i]
+		lib.create_item(tile)
+		lib.set_item_name(tile, Tile.keys()[tile].capitalize())
+		lib.set_item_mesh(tile, _prop_mesh(i, props_mat))
 	return lib
 
 
-func _build_mesh(faces: Array, skin: Dictionary, mat: Material) -> ArrayMesh:
+## Builds a mesh from faces, or adds them as another surface of into.
+func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh = null) -> ArrayMesh:
 	var top_y := 0.0
 	for face in faces:
 		for p in face[0]:
@@ -790,6 +945,27 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material) -> ArrayMesh:
 				st.set_normal(n)
 				st.set_uv(_atlas_uv(tex, _face_uv(v, n, top_y)))
 				st.add_vertex(v)
+	st.set_material(mat)
+	return st.commit(into)
+
+
+## A prop sprite as a quad standing on the cell's centre, leaned back to
+## face the camera, sized so one texel matches the tileset's.
+static func _prop_mesh(index: int, mat: Material) -> ArrayMesh:
+	var size := Vector2(PROP_SPRITE_SIZE) / 16.0
+	var lean := deg_to_rad(PROP_LEAN_DEGREES)
+	var up := Vector3(0, cos(lean), -sin(lean)) * size.y
+	var u0 := float(index) / PROP_SPRITES.size()
+	var u1 := float(index + 1) / PROP_SPRITES.size()
+	var bl := Vector3(-size.x / 2, 0, 0)
+	var br := Vector3(size.x / 2, 0, 0)
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for v in [[bl, Vector2(u0, 1)], [bl + up, Vector2(u0, 0)], [br + up, Vector2(u1, 0)],
+			[bl, Vector2(u0, 1)], [br + up, Vector2(u1, 0)], [br, Vector2(u1, 1)]]:
+		st.set_normal(Vector3(0, sin(lean), cos(lean)))
+		st.set_uv(v[1])
+		st.add_vertex(v[0])
 	st.set_material(mat)
 	return st.commit()
 
