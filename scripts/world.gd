@@ -53,8 +53,11 @@ enum Tile {
 ## Prop tiles, in the order of their sprites in assets/props.png.
 const PROP_SPRITES := [Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH, Tile.TALL_GRASS]
 const PROP_SPRITE_SIZE := Vector2i(32, 48)
-## Props lean back by the camera's pitch so they face it square on.
-const PROP_LEAN_DEGREES := 40.0
+## Sprites (props, crops, the player) stand upright and are stretched
+## vertically by 1 / cos(pitch), so from the fixed camera they look as if
+## they faced it square on, without leaning into the cell behind them.
+const CAMERA_PITCH_DEGREES := 40.0
+const SPRITE_STRETCH := 1.0 / cos(deg_to_rad(CAMERA_PITCH_DEGREES))
 
 ## Gameplay tags per tile. Systems like farming ask what a cell is tagged
 ## with (cell_tags / has_tag) rather than checking for particular tiles.
@@ -154,7 +157,9 @@ func _place_farm(reserved: Dictionary, approaches: Array[Vector2i]) -> void:
 	for x in range(field.position.x, field.end.x):
 		for z in range(field.position.y, field.end.y):
 			set_ground(Vector2i(x, z), Tile.FARMLAND)
-	var margin := field.grow(1)
+	# Keep a margin round the field, and the rows south of it clear too: the
+	# camera looks north, so anything tall there would hide the crops.
+	var margin := field.grow(1).grow_side(SIDE_BOTTOM, 3)
 	for x in range(margin.position.x, margin.end.x):
 		for z in range(margin.position.y, margin.end.y):
 			reserved[Vector2i(x, z)] = true
@@ -949,12 +954,11 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh 
 	return st.commit(into)
 
 
-## A prop sprite as a quad standing on the cell's centre, leaned back to
-## face the camera, sized so one texel matches the tileset's.
+## A prop sprite as an upright quad standing on the cell's centre, sized so
+## one texel matches the tileset's and stretched to face the camera.
 static func _prop_mesh(index: int, mat: Material) -> ArrayMesh:
 	var size := Vector2(PROP_SPRITE_SIZE) / 16.0
-	var lean := deg_to_rad(PROP_LEAN_DEGREES)
-	var up := Vector3(0, cos(lean), -sin(lean)) * size.y
+	var up := Vector3(0, size.y * SPRITE_STRETCH, 0)
 	var u0 := float(index) / PROP_SPRITES.size()
 	var u1 := float(index + 1) / PROP_SPRITES.size()
 	var bl := Vector3(-size.x / 2, 0, 0)
@@ -963,7 +967,7 @@ static func _prop_mesh(index: int, mat: Material) -> ArrayMesh:
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for v in [[bl, Vector2(u0, 1)], [bl + up, Vector2(u0, 0)], [br + up, Vector2(u1, 0)],
 			[bl, Vector2(u0, 1)], [br + up, Vector2(u1, 0)], [br, Vector2(u1, 1)]]:
-		st.set_normal(Vector3(0, sin(lean), cos(lean)))
+		st.set_normal(Vector3.BACK)
 		st.set_uv(v[1])
 		st.add_vertex(v[0])
 	st.set_material(mat)

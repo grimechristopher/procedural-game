@@ -1,4 +1,4 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=10 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/world.gd" id="2_world"]
@@ -6,6 +6,7 @@
 [ext_resource type="Script" path="res://scripts/farm.gd" id="4_farm"]
 [ext_resource type="Script" path="res://scripts/hud.gd" id="5_hud"]
 [ext_resource type="Script" path="res://scripts/follow_camera.gd" id="6_camera"]
+[ext_resource type="Script" path="res://scripts/wardrobe.gd" id="7_wardrobe"]
 
 [sub_resource type="Environment" id="Env"]
 background_mode = 1
@@ -14,17 +15,6 @@ ambient_light_source = 2
 ambient_light_color = Color(0.75, 0.85, 1, 1)
 ambient_light_energy = 0.35
 tonemap_mode = 0
-
-[sub_resource type="StandardMaterial3D" id="BodyMat"]
-albedo_color = Color(0.85, 0.2, 0.2, 1)
-
-[sub_resource type="CapsuleMesh" id="BodyMesh"]
-material = SubResource("BodyMat")
-radius = 0.3
-height = 1.0
-
-[sub_resource type="StandardMaterial3D" id="NoseMat"]
-albedo_color = Color(0.1, 0.1, 0.1, 1)
 
 [sub_resource type="StandardMaterial3D" id="ShadowMat"]
 transparency = 1
@@ -37,10 +27,6 @@ top_radius = 0.32
 bottom_radius = 0.32
 height = 0.01
 radial_segments = 16
-
-[sub_resource type="BoxMesh" id="NoseMesh"]
-material = SubResource("NoseMat")
-size = Vector3(0.15, 0.15, 0.2)
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
@@ -59,15 +45,7 @@ script = ExtResource("2_world")
 script = ExtResource("3_player")
 world = NodePath("../World")
 
-[node name="Body" type="Node3D" parent="Player"]
-
-[node name="Mesh" type="MeshInstance3D" parent="Player/Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.5, 0)
-mesh = SubResource("BodyMesh")
-
-[node name="Nose" type="MeshInstance3D" parent="Player/Body"]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -0.32)
-mesh = SubResource("NoseMesh")
+[node name="Sprite" type="Sprite3D" parent="Player"]
 
 [node name="Shadow" type="MeshInstance3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.01, 0)
@@ -84,3 +62,7 @@ world = NodePath("../World")
 
 [node name="Hud" type="CanvasLayer" parent="."]
 script = ExtResource("5_hud")
+
+[node name="Wardrobe" type="CanvasLayer" parent="."]
+layer = 2
+script = ExtResource("7_wardrobe")

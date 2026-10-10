@@ -4,6 +4,10 @@ extends Node3D
 @onready var player: Player = $Player
 @onready var farm: Farm = $Farm
 @onready var hud: Hud = $Hud
+@onready var wardrobe: Wardrobe = $Wardrobe
+
+## Open the wardrobe at the start so the player can make their character.
+@export var open_wardrobe_on_start := true
 
 
 func _enter_tree() -> void:
@@ -14,11 +18,29 @@ func _ready() -> void:
 	farm.changed.connect(func(): hud.refresh(farm))
 	farm.message.connect(hud.toast)
 	hud.refresh(farm)
+	wardrobe.changed.connect(func():
+		player.refresh_appearance()
+		wardrobe.set_texture(player.sprite.texture))
+	wardrobe.closed.connect(func(): player.input_enabled = true)
+	if open_wardrobe_on_start:
+		_open_wardrobe()
+
+
+func _open_wardrobe() -> void:
+	wardrobe.open(player.appearance, player.sprite.texture)
+	player.input_enabled = false
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if wardrobe.visible:
+		wardrobe.handle(event)
+		get_viewport().set_input_as_handled()
+		return
 	if hud.shop_open:
 		_shop_input(event)
+		return
+	if event.is_action_pressed("wardrobe"):
+		_open_wardrobe()
 		return
 	if event.is_action_pressed("regenerate"):
 		world.generate(randi())
@@ -79,6 +101,7 @@ func _setup_input() -> void:
 		"use_tool": [KEY_SPACE, KEY_C],
 		"interact": [KEY_E],
 		"sleep": [KEY_N],
+		"wardrobe": [KEY_P],
 	}
 	for i in Inventory.SIZE:
 		bindings["hotbar_%d" % i] = [KEY_1 + i if i < 9 else KEY_0]

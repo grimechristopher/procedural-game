@@ -26,7 +26,7 @@ func _ready() -> void:
 	_build_status()
 	_build_hotbar()
 	_build_shop()
-	var help := _label("Space: use   E: interact   1-0 / wheel: select   N: sleep   Shift: run", 13)
+	var help := _label("Space: use   E: interact   1-0 / wheel: select   N: sleep   Shift: run   P: wardrobe", 13)
 	help.anchor_top = 1.0
 	help.anchor_bottom = 1.0
 	help.position = Vector2(12, -26)

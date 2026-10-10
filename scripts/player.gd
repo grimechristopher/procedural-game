@@ -18,7 +18,12 @@ extends Node3D
 ## Diagonal steps take this much longer, so on-screen speed stays constant.
 @export var diagonal_time_scale := 1.41421
 
-@onready var body: Node3D = $Body
+## Fraction of each step spent on the stepping frame before standing again.
+@export var step_frame_portion := 0.6
+
+@onready var sprite: Sprite3D = $Sprite
+
+var appearance := Appearance.new()
 
 var cell := Vector2i.ZERO
 ## Layer of the tile we're standing on.
@@ -35,10 +40,29 @@ var _t := 0.0
 var _step_time := 0.0
 var _hold := 0.0
 var _hold_needed := 0.0
+var _left_foot := false
 
 
 func _ready() -> void:
+	sprite.pixel_size = 1.0 / 16.0
+	sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
+	sprite.shaded = false
+	sprite.hframes = Appearance.COLS
+	sprite.vframes = Appearance.ROWS
+	# Feet sit 2px above the frame's bottom edge; put them on the ground.
+	sprite.offset = Vector2(0, Appearance.FRAME / 2.0 - 2.0)
+	sprite.scale.y = GridWorld.SPRITE_STRETCH
+	# A hair behind the cell centre, so tall grass in this cell covers our feet.
+	sprite.position.z = -0.05
+	refresh_appearance()
 	teleport(world.spawn_cell)
+
+
+## Rebuilds the sprite sheet after the appearance changes.
+func refresh_appearance() -> void:
+	sprite.texture = appearance.build_texture()
+	_update_frame()
 
 
 func teleport(target: Vector2i, target_layer := GridWorld.GROUND_LAYER) -> void:
@@ -50,6 +74,11 @@ func teleport(target: Vector2i, target_layer := GridWorld.GROUND_LAYER) -> void:
 
 
 func _process(delta: float) -> void:
+	_walk(delta)
+	_update_frame()
+
+
+func _walk(delta: float) -> void:
 	if _moving:
 		_t += delta / _step_time
 		if _t < 1.0:
@@ -95,6 +124,7 @@ func _try_step(dir: Vector2i) -> bool:
 	_hold = 0.0
 	_from = world.cell_to_world(cell, layer)
 	_mid_y = world.crossing_height(cell, layer, dir)
+	_left_foot = not _left_foot
 	cell += dir
 	layer = next_layer
 	_to = world.cell_to_world(cell, layer)
@@ -118,8 +148,18 @@ func _update_position() -> void:
 
 func _face(dir: Vector2i) -> void:
 	facing = dir
-	# Body model faces -Z by default; grid y maps to world z.
-	body.rotation.y = atan2(-dir.x, -dir.y)
+	_update_frame()
+
+
+## Picks the sheet row for our facing and the walk frame: a stepping frame
+## (alternating feet) for the first part of each step, standing otherwise.
+func _update_frame() -> void:
+	var row: Array = Appearance.FACING_ROWS[facing]
+	var column := 0
+	if _moving and _t < step_frame_portion:
+		column = 1 if _left_foot else 2
+	sprite.frame = row[0] * Appearance.COLS + column
+	sprite.flip_h = row[1]
 
 
 func _read_input() -> Vector2i:

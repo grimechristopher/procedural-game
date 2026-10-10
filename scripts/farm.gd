@@ -260,11 +260,12 @@ func _update_sprite(cell: Vector2i) -> void:
 		sprite.texture = Crops.SHEET
 		sprite.region_enabled = true
 		sprite.pixel_size = 1.0 / Crops.CELL
-		sprite.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+		sprite.scale.y = GridWorld.SPRITE_STRETCH
+		sprite.offset.y = Crops.CELL / 2.0
 		sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
 		sprite.shaded = false
 		add_child(sprite)
 		_sprites[cell] = sprite
 	sprite.region_rect = Crops.region(Crops.sprite_cell(plots[cell]))
-	sprite.position = world.cell_to_world(cell, GridWorld.GROUND_LAYER) + Vector3(0, 0.5, 0)
+	sprite.position = world.cell_to_world(cell, GridWorld.GROUND_LAYER)
