@@ -151,8 +151,8 @@ const MAX_HEIGHT := 10
 const ROCK_LEVEL := 5
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
 const RAMP_CHANCE := 0.03
-## Unreachable pockets this small get levelled if a ramp won't fit.
-const SMALL_POCKET := 8
+## Unreachable pockets this small (cells) get levelled if no ramp fits.
+const SMALL_POCKET := 30
 const ORTHOGONAL: Array[Vector2i] = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]
 const DIAGONAL: Array[Vector2i] = [Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
@@ -551,6 +551,11 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 				if _join(cell, reached, surface, heights, reserved):
 					done = true
 					break
+			if not done:
+				for cell in cells:
+					if _carve_join(cell, reached, surface, heights, reserved):
+						done = true
+						break
 			if not done and cells.size() <= SMALL_POCKET:
 				done = _level_pocket(cells, reached, surface, heights, reserved)
 			if done:
@@ -783,6 +788,63 @@ func _cut_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserve
 		var step := h + i
 		set_slope(c, step / 2, Tile.HALF_HILL_RAMP if step % 2 == 0 else Tile.UPPER_HALF_HILL_RAMP, dir)
 	for i in range(-1, steps + 1):
+		for side in [Vector2i(dir.y, dir.x), Vector2i(-dir.y, -dir.x), Vector2i.ZERO]:
+			var n: Vector2i = low + dir * i + side
+			if _height_at(heights, n) < 0:
+				continue
+			if side != Vector2i.ZERO:
+				_unshape(n, heights)
+			surface[n.y * map_size.x + n.x] = _top_surface(n)
+	return true
+
+
+## Joins u's pocket to reachable ground a cliff above or below it where
+## there's no room for a ramp at the cliff's foot, by carving the ramp back
+## into the higher ground (see _carve_ramps).
+func _carve_join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
+		reserved: Dictionary) -> bool:
+	var hu := _height_at(heights, u)
+	for d in ORTHOGONAL:
+		var r := u + d
+		var hr := _height_at(heights, r)
+		if hr < 0 or not reached[r.y * map_size.x + r.x] or hr == hu:
+			continue
+		var low := u if hu < hr else r
+		var dir := d if hu < hr else -d
+		if _carve_ramps(low, dir, heights, reserved, surface):
+			return true
+	return false
+
+
+## Cuts a ramp into the higher ground beyond a cliff from low toward dir,
+## starting right at the cliff instead of out in front of it: the cells
+## behind the cliff's edge are lowered into a run of half-block ramps up to
+## the plateau, for cliffs with no level ground at their foot to start from.
+func _carve_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserved: Dictionary,
+		surface: Array) -> bool:
+	var h := _height_at(heights, low)
+	var top := _height_at(heights, low + dir)
+	var steps := top - h
+	if h < 0 or steps < 1 or steps > 6:
+		return false
+	# Plain plateau to cut into, and somewhere to step off at the top.
+	for i in range(1, steps + 2):
+		var c := low + dir * i
+		if reserved.has(c) or _height_at(heights, c) != top \
+				or get_cell_item(Vector3i(c.x, (top - 1) / 2, c.y)) not in [Tile.FULL, Tile.ROCK, Tile.HALF]:
+			return false
+	var landing := low + dir * (steps + 1)
+	if surface[landing.y * map_size.x + landing.x].is_empty():
+		return false
+	for i in range(1, steps + 1):
+		var c := low + dir * i
+		var step := h + i - 1
+		for layer in range(0, TOP_LAYER + 1):
+			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+		_stack_column(c, step)
+		heights[c.y * map_size.x + c.x] = step
+		set_slope(c, step / 2, Tile.HALF_HILL_RAMP if step % 2 == 0 else Tile.UPPER_HALF_HILL_RAMP, dir)
+	for i in range(0, steps + 2):
 		for side in [Vector2i(dir.y, dir.x), Vector2i(-dir.y, -dir.x), Vector2i.ZERO]:
 			var n: Vector2i = low + dir * i + side
 			if _height_at(heights, n) < 0:
