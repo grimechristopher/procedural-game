@@ -55,10 +55,24 @@ class Frame:
 
 
 # --- Skeleton -----------------------------------------------------------------
-# Where body parts sit for each direction and frame. Side-facing rows face
-# east; diagonals borrow from the front or back view, nudged sideways.
+# Where body parts sit for each direction. Side and three-quarter rows face
+# east-ish; the game mirrors them for the west. In three-quarter views the
+# body turns: the near side of the torso shows as a darker strip, the near
+# arm is in full view and the far arm mostly hides behind the body.
+#
+# Facing south-east, the character's right side faces south-west, so the
+# near side and near arm are on the image's left; facing north-east they're
+# on the image's right.
 
 HEAD_ROWS = {6: (13, 18), 7: (11, 20), 17: (12, 19)}  # other rows span 10..21
+
+GEOM = {
+    S: dict(torso=(11, 20), side=None, arms=[(9, 10), (21, 22)], legs=[(12, 14), (17, 19)], head=0),
+    SE: dict(torso=(12, 20), side=(12, 13), arms=[(10, 11), (21, 21)], legs=[(12, 14), (16, 18)], head=1),
+    E: dict(torso=(12, 19), side=None, arms=[(14, 16)], legs=None, head=1),
+    NE: dict(torso=(11, 19), side=(18, 19), arms=[(10, 10), (20, 21)], legs=[(12, 14), (16, 18)], head=1),
+    N: dict(torso=(11, 20), side=None, arms=[(9, 10), (21, 22)], legs=[(12, 14), (17, 19)], head=0),
+}
 
 
 def head_span(y, shift=0):
@@ -66,42 +80,48 @@ def head_span(y, shift=0):
     return lo + shift, hi + shift
 
 
+def head_shift(direction):
+    return GEOM[direction]["head"]
+
+
+def torso(direction):
+    return GEOM[direction]["torso"]
+
+
 def legs(direction, frame):
-    """(x0, x1, bottom_y) per leg."""
-    if direction in (E, ):
+    """(x0, x1, bottom_y) per leg, back to front."""
+    if direction == E:
         if frame == STAND:
             return [(13, 17, 28)]
         front = (16, 18, 28) if frame == STEP_A else (12, 14, 28)
         back = (12, 14, 27) if frame == STEP_A else (16, 18, 27)
         return [back, front]
-    left, right = (12, 14, 28), (17, 19, 28)
+    (l0, l1), (r0, r1) = GEOM[direction]["legs"]
+    lb, rb = 28, 28
     if frame == STEP_A:
-        left, right = (12, 14, 29), (17, 19, 27)
+        lb, rb = 29, 27
     elif frame == STEP_B:
-        left, right = (12, 14, 27), (17, 19, 29)
-    if direction in (SE, NE):
-        left, right = (left[0] + 1, left[1] + 1, left[2]), (right[0] + 1, right[1] + 1, right[2])
-    return [left, right]
+        lb, rb = 27, 29
+    return [(l0, l1, lb), (r0, r1, rb)]
 
 
 def arms(direction, frame):
-    """(x0, x1, top_y, bottom_y) per visible arm."""
+    """(x0, x1, top_y, bottom_y, far) per visible arm."""
     if direction == E:
         swing = {STAND: 0, STEP_A: 1, STEP_B: -1}[frame]
-        return [(14 + swing, 16 + swing, 18, 23)]
-    shift = 1 if direction in (SE, NE) else 0
-    return [(9 + shift, 10 + shift, 18, 23), (21 + shift, 22 + shift, 18, 23)]
+        return [(14 + swing, 16 + swing, 18, 23, False)]
+    out = []
+    for a0, a1 in GEOM[direction]["arms"]:
+        far = a1 == a0 and direction in (SE, NE)
+        out.append((a0, a1, 19 if far else 18, 22 if far else 23, far))
+    return out
 
 
-def torso(direction):
-    if direction == E:
-        return (12, 19)
-    shift = 1 if direction in (SE, NE) else 0
-    return (11 + shift, 20 + shift)
-
-
-def head_shift(direction):
-    return 1 if direction in (SE, NE, E) else 0
+def side_strip(f, d, top, bottom):
+    """Darkens the near side of the torso in three-quarter views."""
+    strip = GEOM[d]["side"]
+    if strip:
+        f.rect(strip[0], top, strip[1], bottom, 1, lit=False)
 
 
 # --- Layers -------------------------------------------------------------------
@@ -119,10 +139,13 @@ def body(f, d, fr):
             f.dot(x, y, shade(k))
     if d == E:
         f.dot(22, 13, shade(2))  # nose
+    elif d == SE:
+        f.dot(22, 13, shade(1))  # nose just past the cheek
     t0, t1 = torso(d)
     f.rect(t0, 18, t1, 23)
-    for a0, a1, top, bottom in arms(d, fr):
-        f.rect(a0, top, a1, bottom)
+    side_strip(f, d, 18, 23)
+    for a0, a1, top, bottom, far in arms(d, fr):
+        f.rect(a0, top, a1, bottom, 1 if far else 2, lit=not far)
     for l0, l1, bottom in legs(d, fr):
         f.rect(l0, 24, l1, bottom)
 
@@ -130,18 +153,32 @@ def body(f, d, fr):
 def eyes(f, d, fr):
     if d in (N, NE):
         return
-    xs = {S: (13, 18), SE: (14, 19), E: (19,)}[d]
-    for x in xs:
+    if d == E:
+        f.dot(19, 12, shade(0))
+        f.dot(19, 13, shade(1))
+        f.dot(20, 12, EYE_WHITE)
+        return
+    if d == SE:
+        # Far eye pinched toward the turned-away side, near eye full.
+        f.dot(15, 12, shade(0))
+        f.dot(15, 13, shade(1))
+        f.dot(19, 12, shade(0))
+        f.dot(19, 13, shade(1))
+        f.dot(20, 12, EYE_WHITE)
+        return
+    for x in (13, 18):
         f.dot(x, 12, shade(0))
         f.dot(x, 13, shade(1))
-        f.dot(x + (1 if d == E else 0), 12 if d == E else 11, EYE_WHITE if d == E else shade(3))
+        f.dot(x, 11, shade(3))
 
 
-def hair_short(f, d, fr, length=10):
+def hair_short(f, d, fr):
     hs = head_shift(d)
     if d in (N, NE):
         for y in range(5, 17):
             lo, hi = head_span(y, hs)
+            if d == NE and y >= 11:
+                hi -= 2  # cheek and ear show on the near side
             f.rect(lo, y, hi, y, 2 if y > 6 else 3)
         return
     for y in range(5, 11):
@@ -153,6 +190,14 @@ def hair_short(f, d, fr, length=10):
         for y in range(11, 16):
             for x in range(11, 16):
                 f.dot(x, y, shade(1 if x == 15 else 2))
+    elif d == SE:
+        # The back of the head shows on the turned-away side.
+        lo = head_span(12, hs)[0]
+        for y in range(11, 16):
+            for x in range(lo, lo + 3):
+                f.dot(x, y, shade(1 if x == lo + 2 else 2))
+        for x in range(lo + 4, head_span(11, hs)[1], 3):
+            f.dot(x, 11, shade(2))
     else:
         for x in (10 + hs, 21 + hs):
             for y in range(11, 14):
@@ -164,10 +209,15 @@ def hair_short(f, d, fr, length=10):
 def hair_long(f, d, fr):
     hair_short(f, d, fr)
     hs = head_shift(d)
-    if d in (N, NE):
-        f.rect(10 + hs, 17, 21 + hs, 21, 2)
+    if d == N:
+        f.rect(10, 17, 21, 21, 2)
+    elif d == NE:
+        f.rect(11, 17, 19, 21, 2)
     elif d == E:
         f.rect(10, 11, 15, 21, 2)
+    elif d == SE:
+        f.rect(10, 9, 13, 21, 2)
+        f.rect(22, 9, 22, 18, 1, lit=False)
     else:
         f.rect(9 + hs, 9, 10 + hs, 21, 2)
         f.rect(21 + hs, 9, 22 + hs, 21, 1, lit=False)
@@ -185,13 +235,19 @@ def hair_spiky(f, d, fr):
 def hat_cap(f, d, fr):
     hs = head_shift(d)
     f.rect(10 + hs, 3, 21 + hs, 8, 2)
-    f.fixed(14 + hs, 4, 17 + hs, 6, WHITE) if d in (S, SE) else None
-    if d in (S, SE):
-        f.rect(9 + hs, 8, 22 + hs, 9, 1, lit=False)
+    if d == S:
+        f.fixed(14, 4, 17, 6, WHITE)
+        f.rect(9, 8, 22, 9, 1, lit=False)
+    elif d == SE:
+        f.fixed(16, 4, 19, 6, WHITE)
+        f.rect(12, 8, 24, 9, 1, lit=False)  # brim turned toward the facing
     elif d == E:
         f.rect(18, 8, 25, 9, 1, lit=False)
+    elif d == NE:
+        f.rect(20, 8, 24, 8, 1, lit=False)  # brim peeking past the near side
+        f.rect(14, 8, 16, 8, 0, lit=False)
     else:
-        f.rect(14 + hs, 8, 17 + hs, 8, 0, lit=False)
+        f.rect(14, 8, 17, 8, 0, lit=False)
 
 
 def hat_beanie(f, d, fr):
@@ -206,11 +262,13 @@ def hat_beanie(f, d, fr):
 def top_tee(f, d, fr, sleeve_end=19):
     t0, t1 = torso(d)
     f.rect(t0, 18, t1, 23)
+    side_strip(f, d, 18, 23)
     if d in (S, SE):
-        f.dot((t0 + t1) // 2, 18, (0, 0, 0, 0))
-        f.dot((t0 + t1) // 2 + 1, 18, (0, 0, 0, 0))
-    for a0, a1, top, _ in arms(d, fr):
-        f.rect(a0, top, a1, sleeve_end)
+        mid = (t0 + t1) // 2 + (1 if d == SE else 0)
+        f.dot(mid, 18, (0, 0, 0, 0))
+        f.dot(mid + 1, 18, (0, 0, 0, 0))
+    for a0, a1, top, bottom, far in arms(d, fr):
+        f.rect(a0, top, a1, min(bottom, sleeve_end), 1 if far else 2, lit=not far)
 
 
 def top_long(f, d, fr):
@@ -221,7 +279,7 @@ def top_jacket(f, d, fr):
     top_long(f, d, fr)
     if d in (S, SE):
         t0, t1 = torso(d)
-        mid = (t0 + t1) // 2
+        mid = (t0 + t1) // 2 + (1 if d == SE else 0)
         f.fixed(mid, 18, mid + 1, 23, WHITE)
         f.dot(mid - 1, 18, shade(3))
         f.dot(mid + 2, 18, shade(3))
@@ -240,8 +298,10 @@ def bottom_shorts(f, d, fr):
 
 def shoes(f, d, fr):
     for l0, l1, bottom in legs(d, fr):
-        if d == E:
-            f.rect(l0, bottom, l1 + 1, bottom + 1, 1)
+        if d in (E, SE):
+            f.rect(l0, bottom, l1 + 1, bottom + 1, 1)  # toes toward the facing
+        elif d == NE:
+            f.rect(l0, bottom, l1, bottom + 1, 1)
         else:
             f.rect(l0 - (1 if l0 < 16 else 0), bottom, l1 + (1 if l0 >= 16 else 0), bottom + 1, 1)
 
