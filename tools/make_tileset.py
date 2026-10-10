@@ -357,7 +357,11 @@ def _cliff_piece(px, ox, oy, kind, rim):
             else:
                 depth = 4.55 - ((8 - lx) ** 2 + (8 - ly) ** 2) ** 0.5
             if depth >= 0:
-                at_edge = y == T - 1 or (kind != "edge" and x == T - 1)
+                if kind == "outer":
+                    # Laid on a quarter circle in game: light its rim.
+                    at_edge = (lx * lx + ly * ly) ** 0.5 >= 7
+                else:
+                    at_edge = y == T - 1 or (kind != "edge" and x == T - 1)
                 put(px, ox, oy, x, y, _band_color(depth, rim, at_edge))
     # Speckles in the rim.
     for x, y in [(9, 14), (13, 13), (3, 14), (11, 15)]:

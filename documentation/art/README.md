@@ -138,8 +138,9 @@ overworld tutorial:
 Terrain heights come in half blocks. Gentle ground has **half cliffs**
 (half a block tall); cliffy ground has **full cliffs** (a block tall), which
 either step back a block at a time or stack straight up into walls two or
-three blocks tall. `scripts/edges.gd` dresses every cliff from these
-tiles, HGSS style: the cliff's rock starts on the top surface, in a band
+three blocks tall. `scripts/terrain_mesh.gd` draws the raised terrain
+(outer corners rounded into quarter circles) and dresses every cliff from
+these tiles, HGSS style: the cliff's rock starts on the top surface, in a band
 along the edge below a wavy grass fringe, and runs on down the face.
 
 - `CLIFF_EDGE`, `CLIFF_OUTER`, `CLIFF_INNER` (rock, for full cliffs) and
@@ -153,6 +154,10 @@ along the edge below a wavy grass fringe, and runs on down the face.
   Across the 8 px from the cell's centre: 3 px grass, a 2 px fringe, 3 px
   of rock or earth, lit on the outermost row where the face begins. Edge
   pieces run the band across the whole tile width (diagonal cliffs use it).
+  Outer corners are rounded in game: the outer piece is laid on a quarter
+  circle of radius 8 px round the cell's centre, so draw its band as rings
+  round the tile's centre (row/column 8), with the highlight on the
+  outermost ring.
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff

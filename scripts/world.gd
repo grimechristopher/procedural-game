@@ -106,9 +106,9 @@ enum Tex {
 	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
 	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
 	EARTH_SIDE,
-	# Cliff-top autotile pieces (see Edges).
+	# Cliff-top autotile pieces (see TerrainMesh).
 	CLIFF_EDGE, CLIFF_OUTER, CLIFF_INNER, EARTH_EDGE, EARTH_OUTER, EARTH_INNER,
-	# Grass creeping over the edges of paths, the plaza and farmland (see Edges).
+	# Grass creeping over the edges of paths, the plaza and farmland (see TerrainMesh).
 	GRASS_EDGE, GRASS_OUTER, GRASS_INNER,
 }
 const TEX_COLS := 4
@@ -157,6 +157,9 @@ var buildings: Array[Dictionary] = []
 var _block_material: ShaderMaterial
 var _building_meshes: Node3D
 var _edges: Node3D
+## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
+## (Off for hand-built test maps, which have no terrain mesh.)
+@export var hide_terrain_blocks := true
 ## Per cell, how far (in steps) the ground may drop to a side neighbour.
 var _max_drop := PackedInt32Array()
 
@@ -206,7 +209,7 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_connect_everything(heights, reserved)
 	_bury_covered_blocks()
-	_edges = Edges.build(self, heights, terrain)
+	_edges = TerrainMesh.build(self, heights, terrain)
 	add_child(_edges)
 
 
@@ -309,7 +312,7 @@ func _height_at(heights: PackedInt32Array, cell: Vector2i) -> int:
 
 
 ## Stacks blocks to each cell's height, then cuts plateaus' outside corners
-## diagonally and breaks the odd cliff with a ramp. (Edges dresses the
+## diagonally and breaks the odd cliff with a ramp. (TerrainMesh draws the
 ## cliffs: earth faces on gentle ground, rock where the terrain is cliffy.)
 func _build_terrain(heights: PackedInt32Array) -> void:
 	for z in map_size.y:
@@ -1268,6 +1271,9 @@ func _build_mesh_library() -> MeshLibrary:
 		lib.create_item(item[0])
 		lib.set_item_name(item[0], item[1])
 		lib.set_item_mesh(item[0], _build_mesh(item[2], item[3], mat))
+	if hide_terrain_blocks:
+		for tile in TerrainMesh.HIDDEN:
+			lib.set_item_mesh(tile, null)
 
 	var water_mat := ShaderMaterial.new()
 	water_mat.shader = WATER_SHADER
