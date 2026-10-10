@@ -8,13 +8,17 @@ extends GridMap
 ## hold several surfaces (e.g. ground under a bridge and the bridge deck).
 ##
 ## Movement rules (see find_move):
-## - Walk between two surfaces when their shared edge is at the same height,
-##   so height only changes on ramps and stairs, which can only be entered
-##   from their low or high end.
-## - Diagonal walks need flat ground at one height, with no corner cutting.
-##   Wedges (corner-cut blocks) are the exception: you can pass the open
-##   corner of a wedge beside you, or walk over its solid corner on top.
-## - Wedges and corner slopes are solid; you can't stand in their cell.
+## - Walk between two surfaces when their shared edge is at the same height
+##   (give or take MAX_STEP, a quarter block), so real height changes happen
+##   on ramps and stairs, which can only be entered from their low or high end.
+## - Diagonal walks compare heights at the shared corner instead, and the
+##   two cells beside the move must be passable at that corner (no corner
+##   cutting). Diagonal ramps can only be walked diagonally, up or down.
+## - Wedges (corner-cut blocks) are solid, but a diagonal walk can pass the
+##   open corner of a wedge beside you, or cross its solid corner on top.
+## - Corner slopes are solid.
+## - Thin pieces (walls, fences, pillars) share a cell with the floor and
+##   block only the cell edges or corners they sit on.
 ## - A surface needs HEADROOM clear above it to be stood on.
 
 enum Tile {
@@ -26,6 +30,14 @@ enum Tile {
 	FULL_DIRT, WEDGE_DIRT,
 	# Same shapes as RAMP and HALF_RAMP, grassed over, for the sides of mounds.
 	HILL_RAMP, HALF_HILL_RAMP,
+	SLAB,
+	# Half-height slopes: HALF_* rise from 0 to 0.5, UPPER_HALF_* from 0.5 to 1,
+	# so a pair makes a gentle two-cell climb.
+	HALF_STAIRS, UPPER_HALF_RAMP, UPPER_HALF_STAIRS,
+	# Rise corner to corner; only walkable diagonally.
+	DIAG_RAMP, HALF_DIAG_RAMP,
+	# Thin pieces along a cell's edge (or, for PILLAR, in its corner).
+	WALL, WALL_CORNER, DOORWAY, FENCE, FENCE_CORNER, PILLAR,
 }
 
 ## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
@@ -43,6 +55,8 @@ const HEADROOM := 1.0
 const BRIDGE_THICKNESS := 0.15
 const EPS := 0.001
 const NO_MOVE := -999
+## Height difference you can step up or down without a slope.
+const MAX_STEP := 0.25
 
 @export var map_size := Vector2i(28, 28)
 @export var platform_count := 10
@@ -50,6 +64,7 @@ const NO_MOVE := -999
 @export var map_seed := 1
 
 var spawn_cell := Vector2i.ZERO
+var spawn_layer := 0
 
 
 func _ready() -> void:
@@ -79,6 +94,11 @@ func generate(new_seed: int) -> void:
 				set_cell_item(Vector3i(x, 0, z), Tile.FULL)
 				set_cell_item(Vector3i(x, 1, z), Tile.FULL)
 
+	# Stone plaza at spawn.
+	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
+		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
+			set_cell_item(Vector3i(x, 0, z), Tile.SLAB)
+
 	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
 	var placed := 0
@@ -87,6 +107,10 @@ func generate(new_seed: int) -> void:
 			break
 		if _try_place_platform(rng, reserved, towers, approaches):
 			placed += 1
+	for enclosure in [true, false]:
+		for attempt in 20:
+			if _try_place_enclosure(rng, reserved, approaches, enclosure):
+				break
 	_place_bridges(rng, towers)
 	_decorate_ground(rng, approaches)
 	_bury_covered_blocks()
@@ -115,15 +139,20 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 			if rng.randf() < 0.08:
 				set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.FLOWERS)
 
-	# Breadth-first over ground-level steps, so paths go around obstacles.
+	# Breadth-first over straight steps that stay at ground level (or start
+	# from the plaza), so paths go around obstacles.
 	var came_from := { spawn_cell: spawn_cell }
-	var frontier: Array[Vector2i] = [spawn_cell]
+	var frontier: Array = [[spawn_cell, spawn_layer]]
 	while not frontier.is_empty():
-		var c: Vector2i = frontier.pop_front()
+		var state: Array = frontier.pop_front()
+		var c: Vector2i = state[0]
 		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
-			if not came_from.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
+			if came_from.has(c + d):
+				continue
+			var next := find_move(c, state[1], d)
+			if next == GROUND_LAYER or (next == spawn_layer and get_cell_item(Vector3i(c.x + d.x, 0, c.y + d.y)) == Tile.SLAB):
 				came_from[c + d] = c
-				frontier.append(c + d)
+				frontier.append([c + d, next])
 	for target in targets:
 		if not came_from.has(target):
 			continue
@@ -131,7 +160,6 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 		while c != spawn_cell:
 			set_cell_item(Vector3i(c.x, GROUND_LAYER, c.y), Tile.PATH)
 			c = came_from[c]
-		set_cell_item(Vector3i(c.x, GROUND_LAYER, c.y), Tile.PATH)
 
 
 ## Places a rectangular platform: half height, full height, or a two-high
@@ -158,7 +186,8 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 	var slope := Vector2i(
 		mid.x if up_dir.x == 0 else (rect.position.x - 1 if up_dir.x > 0 else rect.end.x),
 		mid.y if up_dir.y == 0 else (rect.position.y - 1 if up_dir.y > 0 else rect.end.y))
-	var slope_cells: Array = [slope] if kind < 2 or mound else [slope, slope - up_dir]
+	var gentle := kind == 1 and rng.randf() < 0.4
+	var slope_cells: Array = [slope, slope - up_dir] if kind == 2 or gentle else [slope]
 	var approach: Vector2i = slope_cells.back() - up_dir
 	var claim: Array = [] if mound else slope_cells + [approach]
 	var footprint := rect.grow(2 if mound else 1)
@@ -179,23 +208,81 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 	if mound:
 		_surround_with_slopes(rect, half)
 	else:
-		var slope_tile: Tile = Tile.HALF_RAMP if half else (Tile.STAIRS if rng.randf() < 0.5 else Tile.RAMP)
+		var stairs := rng.randf() < 0.5
 		if kind == 2:
+			var tile: Tile = Tile.STAIRS if stairs else Tile.RAMP
 			set_cell_item(Vector3i(slope.x, 0, slope.y), Tile.FULL)
-			set_slope(slope, 1, slope_tile, up_dir)
-			set_slope(slope - up_dir, 0, slope_tile, up_dir)
+			set_slope(slope, 1, tile, up_dir)
+			set_slope(slope - up_dir, 0, tile, up_dir)
 			towers.append(rect)
+		elif gentle:
+			set_slope(slope, 0, Tile.UPPER_HALF_STAIRS if stairs else Tile.UPPER_HALF_RAMP, up_dir)
+			set_slope(slope - up_dir, 0, Tile.HALF_STAIRS if stairs else Tile.HALF_RAMP, up_dir)
+		elif half:
+			set_slope(slope, 0, Tile.HALF_STAIRS if stairs else Tile.HALF_RAMP, up_dir)
 		else:
-			set_slope(slope, 0, slope_tile, up_dir)
+			set_slope(slope, 0, Tile.STAIRS if stairs else Tile.RAMP, up_dir)
 		# Cut no deeper than leaves the middle of every side (where the ramp lands) intact.
 		var max_cut := mini((size.x - 1) / 2, (size.y - 1) / 2)
 		if max_cut >= 1 and rng.randf() < 0.7:
 			var depth := rng.randi_range(maxi(1, max_cut - 1), max_cut)
 			_cut_corners(rect, layers, Tile.HALF_WEDGE if half else Tile.WEDGE, depth)
+			# Long diagonal edges on one-layer platforms may get a diagonal ramp.
+			if depth >= 2 and layers == 1 and rng.randf() < 0.9:
+				var corner: Dictionary = _rect_corners(rect)[rng.randi() % 4]
+				var i := depth / 2
+				var ramp_cell: Vector2i = corner.cell + Vector2i(i * corner.inward.x, (depth - 1 - i) * corner.inward.y)
+				set_corner(ramp_cell, 0, Tile.HALF_DIAG_RAMP if half else Tile.DIAG_RAMP, corner.inward)
+				approaches.append(ramp_cell - corner.inward)
 
 	for c in claim:
 		reserved[c] = true
 	approaches.append(approach)
+	return true
+
+
+## Places a walled ruin with a doorway, or a fenced pen with a gap, on open
+## ground. Walls and fences run along the outside edges of the border cells.
+func _try_place_enclosure(rng: RandomNumberGenerator, reserved: Dictionary,
+		approaches: Array[Vector2i], walled: bool) -> bool:
+	var size := Vector2i(rng.randi_range(3, 5), rng.randi_range(3, 5))
+	var rect := Rect2i(
+		Vector2i(rng.randi_range(3, map_size.x - size.x - 3), rng.randi_range(3, map_size.y - size.y - 3)),
+		size)
+	var footprint := rect.grow(1)
+	for x in range(footprint.position.x, footprint.end.x):
+		for z in range(footprint.position.y, footprint.end.y):
+			if reserved.has(Vector2i(x, z)):
+				return false
+
+	var door_dir: Vector2i = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT][rng.randi() % 4]
+	var mid := rect.position + rect.size / 2
+	var door := Vector2i(
+		mid.x if door_dir.x == 0 else (rect.position.x if door_dir.x < 0 else rect.end.x - 1),
+		mid.y if door_dir.y == 0 else (rect.position.y if door_dir.y < 0 else rect.end.y - 1))
+	var hi := rect.end - Vector2i.ONE
+	for x in range(rect.position.x, rect.end.x):
+		for z in range(rect.position.y, rect.end.y):
+			var out := Vector2i(
+				-1 if x == rect.position.x else (1 if x == hi.x else 0),
+				-1 if z == rect.position.y else (1 if z == hi.y else 0))
+			if out == Vector2i.ZERO:
+				continue
+			var cell := Vector2i(x, z)
+			if cell == door:
+				if walled:
+					set_slope(cell, 0, Tile.DOORWAY, door_dir)
+			elif out.x != 0 and out.y != 0:
+				set_corner(cell, 0, Tile.WALL_CORNER if walled else Tile.FENCE_CORNER, out)
+			else:
+				set_slope(cell, 0, Tile.WALL if walled else Tile.FENCE, out)
+	if walled:
+		set_corner(rect.position + Vector2i.ONE, 0, Tile.PILLAR, Vector2i(-1, -1))
+
+	for x in range(footprint.position.x, footprint.end.x):
+		for z in range(footprint.position.y, footprint.end.y):
+			reserved[Vector2i(x, z)] = true
+	approaches.append(door + door_dir)
 	return true
 
 
@@ -257,8 +344,10 @@ func _place_bridges(rng: RandomNumberGenerator, towers: Array[Rect2i]) -> void:
 		var span := _bridge_span(rng, a, b)
 		if span.is_empty():
 			continue
+		# Towers apart along x get a bridge running along x (railings on its sides).
+		var along := Vector2i.RIGHT if a.end.x <= b.position.x or b.end.x <= a.position.x else Vector2i.DOWN
 		for c in span:
-			set_cell_item(Vector3i(c.x, 1, c.y), Tile.BRIDGE)
+			set_slope(c, 1, Tile.BRIDGE, along)
 		linked[[a, b]] = true
 		linked[[b, a]] = true
 		placed += 1
@@ -319,21 +408,37 @@ func find_move(cell: Vector2i, layer: int, dir: Vector2i) -> int:
 
 	if dir.x == 0 or dir.y == 0:
 		var e := _edge(s, dir)
-		if not is_nan(e):
-			for t in _surfaces(to):
-				if is_equal_approx(_edge(t, -dir), e):
-					return t.layer
+		if is_nan(e) or _edge_blocked(cell, dir, e):
+			return NO_MOVE
+		for t in _surfaces(to):
+			var e2 := _edge(t, -dir)
+			if not is_nan(e2) and absf(e2 - e) <= MAX_STEP + EPS and not _edge_blocked(to, -dir, e2):
+				return t.layer
 		return NO_MOVE
 
-	if _rise(s.tile) > 0.0:
+	var h := _corner_height(s, dir, true)
+	if is_nan(h):
 		return NO_MOVE
-	var h := _center(s)
-	var dest := _flat_surface_at(to, h)
-	if dest.is_empty() \
-			or not _corner_passable(cell + Vector2i(dir.x, 0), Vector2i(-dir.x, dir.y), h) \
-			or not _corner_passable(cell + Vector2i(0, dir.y), Vector2i(dir.x, -dir.y), h):
+	var side_a := cell + Vector2i(dir.x, 0)
+	var side_b := cell + Vector2i(0, dir.y)
+	if _corner_blocked(cell, dir, h) \
+			or not _corner_passable(side_a, Vector2i(-dir.x, dir.y), h) \
+			or not _corner_passable(side_b, Vector2i(dir.x, -dir.y), h):
 		return NO_MOVE
-	return dest.layer
+	for t in _surfaces(to):
+		var h2 := _corner_height(t, -dir, true)
+		if not is_nan(h2) and absf(h2 - h) <= MAX_STEP + EPS and not _corner_blocked(to, -dir, h2):
+			return t.layer
+	return NO_MOVE
+
+
+## Height where a step from (cell, layer) in dir crosses into the next cell:
+## the shared edge, or for a diagonal step the shared corner.
+func crossing_height(cell: Vector2i, layer: int, dir: Vector2i) -> float:
+	var s := _surface(cell, layer)
+	if dir.x == 0 or dir.y == 0:
+		return _edge(s, dir)
+	return _corner_height(s, dir, true)
 
 
 func edge_height(cell: Vector2i, layer: int, dir: Vector2i) -> float:
@@ -360,31 +465,40 @@ func _surfaces(cell: Vector2i) -> Array[Dictionary]:
 	return out
 
 
-## The tile at (cell, layer) as a surface, or {} if there's no tile there or
-## something above it leaves less than HEADROOM.
+## The tile at (cell, layer) as a surface, or {} if there's no tile there,
+## it isn't something you stand on, or something above it leaves less than
+## HEADROOM. Thin pieces sit at the cell's edge, so they don't take headroom.
 func _surface(cell: Vector2i, layer: int) -> Dictionary:
 	if cell.x < 0 or cell.y < 0 or cell.x >= map_size.x or cell.y >= map_size.y:
 		return {}
 	var pos := Vector3i(cell.x, layer, cell.y)
 	var item := get_cell_item(pos)
-	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item):
+	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item) or _is_thin(item):
 		return {}
 	var top := _span(item, layer).y
 	for above in range(layer + 1, TOP_LAYER + 1):
 		var other := get_cell_item(Vector3i(cell.x, above, cell.y))
-		if other != INVALID_CELL_ITEM:
-			if _span(other, above).x < top + HEADROOM - EPS:
-				return {}
-			break
+		if other == INVALID_CELL_ITEM or _is_thin(other):
+			continue
+		if _span(other, above).x < top + HEADROOM - EPS:
+			return {}
+		break
 	var fwd := get_cell_item_basis(pos) * Vector3.FORWARD
-	return { tile = item, layer = layer, up = Vector2i(roundi(fwd.x), roundi(fwd.z)) }
+	return {
+		tile = item, layer = layer,
+		up = Vector2i(roundi(fwd.x), roundi(fwd.z)), diag = _corner_dir(cell, layer),
+	}
 
 
-## Whether a diagonal walk at height h can pass the given corner of cell
-## (corner as a sign vector from the cell's center).
+## Whether a diagonal walk at height h can pass the given corner of a cell
+## beside it (corner as a sign vector from the cell's center).
 func _corner_passable(cell: Vector2i, corner: Vector2i, h: float) -> bool:
-	if not _flat_surface_at(cell, h).is_empty():
-		return true
+	if _corner_blocked(cell, corner, h):
+		return false
+	for s in _surfaces(cell):
+		var ch := _corner_height(s, corner, false)
+		if not is_nan(ch) and absf(ch - h) <= MAX_STEP + EPS:
+			return true
 	for layer in range(GROUND_LAYER + 1, TOP_LAYER + 1):
 		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
 		if not _is_wedge(item):
@@ -407,11 +521,9 @@ func _corner_dir(cell: Vector2i, layer: int) -> Vector2i:
 	return Vector2i(roundi(d.x), roundi(d.z))
 
 
-func _flat_surface_at(cell: Vector2i, h: float) -> Dictionary:
-	for s in _surfaces(cell):
-		if _rise(s.tile) == 0.0 and is_equal_approx(_center(s), h):
-			return s
-	return {}
+func _up_dir(cell: Vector2i, layer: int) -> Vector2i:
+	var d := get_cell_item_basis(Vector3i(cell.x, layer, cell.y)) * Vector3.FORWARD
+	return Vector2i(roundi(d.x), roundi(d.z))
 
 
 ## Surface height at the edge of s facing dir, or NAN if it can't be
@@ -422,19 +534,88 @@ func _edge(s: Dictionary, dir: Vector2i) -> float:
 	var rise := _rise(s.tile)
 	if rise == 0.0:
 		return _span(s.tile, s.layer).y
+	if _is_diag_ramp(s.tile):
+		return NAN
+	var low: float = s.layer + _base(s.tile)
 	if dir == s.up:
-		return s.layer + rise
+		return low + rise
 	if dir == -s.up:
-		return float(s.layer)
+		return low
 	return NAN
+
+
+## Surface height at a corner of s (a sign vector). With along_only, only
+## corners you can step diagonally through count: any corner of flat ground,
+## and the low or high corner of a diagonal ramp.
+func _corner_height(s: Dictionary, corner: Vector2i, along_only: bool) -> float:
+	if s.is_empty():
+		return NAN
+	var rise := _rise(s.tile)
+	if rise == 0.0:
+		return _span(s.tile, s.layer).y
+	var low: float = s.layer + _base(s.tile)
+	if _is_diag_ramp(s.tile):
+		if corner == s.diag:
+			return low + rise
+		if corner == -s.diag:
+			return low
+		return NAN if along_only else low + rise / 2.0
+	if along_only:
+		return NAN
+	return low + rise if corner.x * s.up.x + corner.y * s.up.y > 0 else low
 
 
 func _center(s: Dictionary) -> float:
 	var rise := _rise(s.tile)
-	return s.layer + rise / 2.0 if rise > 0.0 else _span(s.tile, s.layer).y
+	return s.layer + _base(s.tile) + rise / 2.0 if rise > 0.0 else _span(s.tile, s.layer).y
 
 
-## Vertical extent (bottom, top) a tile occupies in world space.
+## Thin pieces in a cell that reach into the body-height space above h.
+func _thin_pieces(cell: Vector2i, h: float) -> Array:
+	var out := []
+	for layer in range(GROUND_LAYER + 1, TOP_LAYER + 1):
+		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
+		if not _is_thin(item):
+			continue
+		var span := _span(item, layer)
+		if span.y > h + EPS and span.x < h + HEADROOM - EPS:
+			out.append([item, layer])
+	return out
+
+
+func _edge_blocked(cell: Vector2i, dir: Vector2i, h: float) -> bool:
+	for piece in _thin_pieces(cell, h):
+		var item: int = piece[0]
+		match item:
+			Tile.WALL, Tile.FENCE:
+				if dir == _up_dir(cell, piece[1]):
+					return true
+			Tile.WALL_CORNER, Tile.FENCE_CORNER:
+				var d := _corner_dir(cell, piece[1])
+				if dir == Vector2i(d.x, 0) or dir == Vector2i(0, d.y):
+					return true
+	return false
+
+
+func _corner_blocked(cell: Vector2i, corner: Vector2i, h: float) -> bool:
+	for piece in _thin_pieces(cell, h):
+		var item: int = piece[0]
+		match item:
+			Tile.WALL, Tile.FENCE, Tile.DOORWAY:
+				var u := _up_dir(cell, piece[1])
+				var across := Vector2i(u.y, -u.x)
+				if corner == u + across or corner == u - across:
+					return true
+			Tile.WALL_CORNER, Tile.FENCE_CORNER:
+				var d := _corner_dir(cell, piece[1])
+				if corner == d or corner == Vector2i(d.x, -d.y) or corner == Vector2i(-d.x, d.y):
+					return true
+			Tile.PILLAR:
+				if corner == _corner_dir(cell, piece[1]):
+					return true
+	return false
+
+
 static func _is_wedge(tile: int) -> bool:
 	return tile == Tile.WEDGE or tile == Tile.HALF_WEDGE or tile == Tile.WEDGE_DIRT
 
@@ -443,19 +624,38 @@ static func _is_corner_slope(tile: int) -> bool:
 	return tile in [Tile.CORNER_OUTER, Tile.CORNER_INNER, Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER]
 
 
+static func _is_diag_ramp(tile: int) -> bool:
+	return tile == Tile.DIAG_RAMP or tile == Tile.HALF_DIAG_RAMP
+
+
+static func _is_thin(tile: int) -> bool:
+	return tile in [Tile.WALL, Tile.WALL_CORNER, Tile.DOORWAY, Tile.FENCE, Tile.FENCE_CORNER, Tile.PILLAR]
+
+
+## Vertical extent (bottom, top) a tile occupies in world space.
 static func _span(tile: int, layer: int) -> Vector2:
 	match tile:
-		Tile.HALF, Tile.HALF_RAMP, Tile.HALF_HILL_RAMP, Tile.HALF_WEDGE, Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER:
+		Tile.HALF, Tile.HALF_RAMP, Tile.HALF_HILL_RAMP, Tile.HALF_STAIRS, Tile.HALF_WEDGE, \
+				Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER, Tile.HALF_DIAG_RAMP, \
+				Tile.FENCE, Tile.FENCE_CORNER:
 			return Vector2(layer, layer + 0.5)
+		Tile.SLAB: return Vector2(layer, layer + 0.25)
 		Tile.BRIDGE: return Vector2(layer + 1.0 - BRIDGE_THICKNESS, layer + 1.0)
 	return Vector2(layer, layer + 1.0)
 
 
 static func _rise(tile: int) -> float:
 	match tile:
-		Tile.RAMP, Tile.HILL_RAMP, Tile.STAIRS: return 1.0
-		Tile.HALF_RAMP, Tile.HALF_HILL_RAMP: return 0.5
+		Tile.RAMP, Tile.HILL_RAMP, Tile.STAIRS, Tile.DIAG_RAMP: return 1.0
+		Tile.HALF_RAMP, Tile.HALF_HILL_RAMP, Tile.HALF_STAIRS, Tile.HALF_DIAG_RAMP, \
+				Tile.UPPER_HALF_RAMP, Tile.UPPER_HALF_STAIRS:
+			return 0.5
 	return 0.0
+
+
+## Height a slope starts at within its cell.
+static func _base(tile: int) -> float:
+	return 0.5 if tile == Tile.UPPER_HALF_RAMP or tile == Tile.UPPER_HALF_STAIRS else 0.0
 
 
 # --- Meshes -----------------------------------------------------------------
@@ -471,6 +671,8 @@ func _build_mesh_library() -> MeshLibrary:
 	var grass_block := { top = Tex.GRASS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }
 	var ramp := { top = Tex.PATH, side = Tex.DIRT, slope = Tex.PATH }
 	var hill := { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }
+	var stone := { top = Tex.STONE, side = Tex.STONE, slope = Tex.STONE }
+	var wood := { top = Tex.PLANKS, side = Tex.PLANKS, slope = Tex.PLANKS }
 	var full_box := _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 1, 0.5))
 
 	var lib := MeshLibrary.new()
@@ -486,15 +688,26 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.HALF_RAMP, "HalfRamp", _ramp_faces(0.5), ramp],
 		[Tile.HILL_RAMP, "HillRamp", _ramp_faces(1.0), hill],
 		[Tile.HALF_HILL_RAMP, "HalfHillRamp", _ramp_faces(0.5), hill],
-		[Tile.STAIRS, "Stairs", _stairs_faces(1.0, STAIR_STEPS), { top = Tex.STONE, side = Tex.STONE, slope = Tex.STONE }],
+		[Tile.STAIRS, "Stairs", _stairs_faces(1.0, STAIR_STEPS), stone],
 		[Tile.WEDGE, "Wedge", _wedge_faces(1.0), grass_block],
 		[Tile.HALF_WEDGE, "HalfWedge", _wedge_faces(0.5), grass_block],
 		[Tile.CORNER_OUTER, "CornerOuter", _outer_corner_faces(1.0), hill],
 		[Tile.CORNER_INNER, "CornerInner", _inner_corner_faces(1.0), hill],
 		[Tile.HALF_CORNER_OUTER, "HalfCornerOuter", _outer_corner_faces(0.5), hill],
 		[Tile.HALF_CORNER_INNER, "HalfCornerInner", _inner_corner_faces(0.5), hill],
-		[Tile.BRIDGE, "Bridge", _box_faces(Vector3(-0.5, 1.0 - BRIDGE_THICKNESS, -0.5), Vector3(0.5, 1, 0.5)),
-			{ top = Tex.PLANKS, side = Tex.PLANKS, slope = Tex.PLANKS }],
+		[Tile.BRIDGE, "Bridge", _bridge_faces(), wood],
+		[Tile.SLAB, "Slab", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.25, 0.5)), stone],
+		[Tile.HALF_STAIRS, "HalfStairs", _stairs_faces(0.5, 2), stone],
+		[Tile.UPPER_HALF_RAMP, "UpperHalfRamp", _ramp_faces(0.5, 0.5), ramp],
+		[Tile.UPPER_HALF_STAIRS, "UpperHalfStairs", _stairs_faces(0.5, 2, 0.5), stone],
+		[Tile.DIAG_RAMP, "DiagRamp", _diag_ramp_faces(1.0), ramp],
+		[Tile.HALF_DIAG_RAMP, "HalfDiagRamp", _diag_ramp_faces(0.5), ramp],
+		[Tile.WALL, "Wall", _wall_faces(1.0), stone],
+		[Tile.WALL_CORNER, "WallCorner", _wall_faces(1.0) + _wall_faces(1.0, true), stone],
+		[Tile.DOORWAY, "Doorway", _doorway_faces(), stone],
+		[Tile.FENCE, "Fence", _fence_faces(), wood],
+		[Tile.FENCE_CORNER, "FenceCorner", _fence_faces() + _fence_faces(true), wood],
+		[Tile.PILLAR, "Pillar", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(-0.3, 1, -0.3)), stone],
 	]
 	for item in items:
 		lib.create_item(item[0])
@@ -560,15 +773,69 @@ static func _box_faces(lo: Vector3, hi: Vector3) -> Array:
 	]
 
 
-static func _ramp_faces(rise: float) -> Array:
+## Rises toward -Z from base to base + rise.
+static func _ramp_faces(rise: float, base := 0.0) -> Array:
+	var top := base + rise
 	var slope_n := Vector3(0, 1, rise).normalized()
-	return [
-		[[Vector3(-0.5, 0, 0.5), Vector3(0.5, 0, 0.5), Vector3(0.5, rise, -0.5), Vector3(-0.5, rise, -0.5)], slope_n],
+	var faces := [
+		[[Vector3(-0.5, base, 0.5), Vector3(0.5, base, 0.5), Vector3(0.5, top, -0.5), Vector3(-0.5, top, -0.5)], slope_n],
 		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, 0, 0.5), Vector3(-0.5, 0, 0.5)], Vector3.DOWN],
-		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, rise, -0.5), Vector3(-0.5, rise, -0.5)], Vector3.FORWARD],
-		[[Vector3(0.5, 0, 0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, rise, -0.5)], Vector3.RIGHT],
-		[[Vector3(-0.5, 0, 0.5), Vector3(-0.5, 0, -0.5), Vector3(-0.5, rise, -0.5)], Vector3.LEFT],
+		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, top, -0.5), Vector3(-0.5, top, -0.5)], Vector3.FORWARD],
+		[[Vector3(0.5, 0, 0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, top, -0.5), Vector3(0.5, base, 0.5)], Vector3.RIGHT],
+		[[Vector3(-0.5, 0, 0.5), Vector3(-0.5, 0, -0.5), Vector3(-0.5, top, -0.5), Vector3(-0.5, base, 0.5)], Vector3.LEFT],
 	]
+	if base > 0.0:
+		faces.append([[Vector3(-0.5, 0, 0.5), Vector3(0.5, 0, 0.5), Vector3(0.5, base, 0.5), Vector3(-0.5, base, 0.5)], Vector3.BACK])
+	return faces
+
+
+## Rises from the (+x, +z) corner up to the (-x, -z) corner.
+static func _diag_ramp_faces(rise: float) -> Array:
+	var mid := rise / 2.0
+	return [
+		_upward_face([Vector3(-0.5, rise, -0.5), Vector3(0.5, mid, -0.5), Vector3(0.5, 0, 0.5), Vector3(-0.5, mid, 0.5)]),
+		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, 0, 0.5), Vector3(-0.5, 0, 0.5)], Vector3.DOWN],
+		[[Vector3(-0.5, 0, -0.5), Vector3(-0.5, 0, 0.5), Vector3(-0.5, mid, 0.5), Vector3(-0.5, rise, -0.5)], Vector3.LEFT],
+		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, mid, -0.5), Vector3(-0.5, rise, -0.5)], Vector3.FORWARD],
+		[[Vector3(0.5, 0, -0.5), Vector3(0.5, mid, -0.5), Vector3(0.5, 0, 0.5)], Vector3.RIGHT],
+		[[Vector3(-0.5, 0, 0.5), Vector3(-0.5, mid, 0.5), Vector3(0.5, 0, 0.5)], Vector3.BACK],
+	]
+
+
+## Thin wall along the -Z edge (or the -X edge with on_x).
+static func _wall_faces(h: float, on_x := false) -> Array:
+	return _edge_box(-0.5, 0.5, 0.0, h, 0.12, on_x)
+
+
+static func _doorway_faces() -> Array:
+	return _edge_box(-0.5, -0.2, 0.0, 1.0, 0.12) + _edge_box(0.2, 0.5, 0.0, 1.0, 0.12) \
+		+ _edge_box(-0.2, 0.2, 0.8, 1.0, 0.12)
+
+
+## Posts and two rails along the -Z edge (or the -X edge with on_x).
+static func _fence_faces(on_x := false) -> Array:
+	var faces := []
+	for x in [-0.5, -0.04, 0.42]:
+		faces.append_array(_edge_box(x, x + 0.08, 0.0, 0.5, 0.08, on_x))
+	faces.append_array(_edge_box(-0.5, 0.5, 0.18, 0.26, 0.05, on_x))
+	faces.append_array(_edge_box(-0.5, 0.5, 0.36, 0.44, 0.05, on_x))
+	return faces
+
+
+## Box hugging the -Z edge: from x0 to x1 along it, y0 to y1 high, depth deep.
+static func _edge_box(x0: float, x1: float, y0: float, y1: float, depth: float, on_x := false) -> Array:
+	if on_x:
+		return _box_faces(Vector3(-0.5, y0, x0), Vector3(-0.5 + depth, y1, x1))
+	return _box_faces(Vector3(x0, y0, -0.5), Vector3(x1, y1, -0.5 + depth))
+
+
+## Plank deck at the top of the cell with railings along both sides (+-X).
+static func _bridge_faces() -> Array:
+	var faces := _box_faces(Vector3(-0.5, 1.0 - BRIDGE_THICKNESS, -0.5), Vector3(0.5, 1, 0.5))
+	for x in [-0.5, 0.44]:
+		faces.append_array(_box_faces(Vector3(x, 1.3, -0.5), Vector3(x + 0.06, 1.38, 0.5)))
+		faces.append_array(_box_faces(Vector3(x, 1.0, -0.04), Vector3(x + 0.06, 1.3, 0.04)))
+	return faces
 
 
 ## Full cell cut corner to corner, keeping the (-x, -z) half.
@@ -607,17 +874,23 @@ static func _inner_corner_faces(rise: float) -> Array:
 	]
 
 
+static func _upward_face(pts: Array) -> Array:
+	var n: Vector3 = (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalized()
+	return [pts, n if n.y > 0.0 else -n]
+
+
 static func _upward_tri(a: Vector3, b: Vector3, c: Vector3) -> Array:
 	var n := (b - a).cross(c - a).normalized()
 	return [[a, b, c], n if n.y > 0.0 else -n]
 
 
-static func _stairs_faces(rise: float, steps: int) -> Array:
+## Steps climbing toward -Z from base to base + rise.
+static func _stairs_faces(rise: float, steps: int, base := 0.0) -> Array:
 	var faces := []
 	var depth := 1.0 / steps
 	for i in steps:
 		var z_front := 0.5 - i * depth
 		faces.append_array(_box_faces(
 			Vector3(-0.5, 0, z_front - depth),
-			Vector3(0.5, rise * (i + 1) / steps, z_front)))
+			Vector3(0.5, base + rise * (i + 1) / steps, z_front)))
 	return faces

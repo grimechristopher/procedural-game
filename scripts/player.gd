@@ -36,7 +36,7 @@ var _hold_needed := 0.0
 
 
 func _ready() -> void:
-	teleport(world.spawn_cell)
+	teleport(world.spawn_cell, world.spawn_layer)
 
 
 func teleport(target: Vector2i, target_layer := GridWorld.GROUND_LAYER) -> void:
@@ -83,7 +83,7 @@ func _try_step(dir: Vector2i) -> bool:
 		return false
 	_hold = 0.0
 	_from = world.cell_to_world(cell, layer)
-	_mid_y = world.edge_height(cell, layer, dir) if dir.x == 0 or dir.y == 0 else _from.y
+	_mid_y = world.crossing_height(cell, layer, dir)
 	cell += dir
 	layer = next_layer
 	_to = world.cell_to_world(cell, layer)

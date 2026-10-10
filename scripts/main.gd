@@ -11,7 +11,7 @@ func _enter_tree() -> void:
 func _unhandled_input(event: InputEvent) -> void:
 	if event.is_action_pressed("regenerate"):
 		world.generate(randi())
-		player.teleport(world.spawn_cell)
+		player.teleport(world.spawn_cell, world.spawn_layer)
 
 
 func _setup_input() -> void:
