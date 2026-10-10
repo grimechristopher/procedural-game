@@ -63,7 +63,8 @@ const PROP_SPRITE_SIZE := Vector2i(32, 48)
 ## Sprites (props, crops, the player) stand upright and are stretched
 ## vertically by 1 / cos(pitch), so from the fixed camera they look as if
 ## they faced it square on, without leaning into the cell behind them.
-const CAMERA_PITCH_DEGREES := 40.0
+## The pitch is HGSS's and Platinum's field camera (see FollowCamera).
+const CAMERA_PITCH_DEGREES := 59.05
 const SPRITE_STRETCH := 1.0 / cos(deg_to_rad(CAMERA_PITCH_DEGREES))
 
 ## Gameplay tags per tile. Systems like farming ask what a cell is tagged

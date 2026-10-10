@@ -54,7 +54,7 @@ mesh = SubResource("ShadowMesh")
 
 [node name="Camera" type="Camera3D" parent="Player"]
 script = ExtResource("6_camera")
-fov = 40.0
+fov = 16.18
 
 [node name="Farm" type="Node3D" parent="." node_paths=PackedStringArray("world")]
 script = ExtResource("4_farm")
