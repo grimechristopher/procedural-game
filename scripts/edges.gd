@@ -28,9 +28,6 @@ const HALF_CLIFF_LIP := 0.65
 const FACE_OFFSET := 0.01
 const WATER_SURFACE := -0.25
 const SHADOW_WIDTH := 0.45
-## Cliffs facing away from the camera (north) hide their face and foot, so
-## their drop is marked by a dark rim along the lip instead.
-const RIM_DEPTH := 0.12
 const SHADOW_ALPHA := 0.35
 ## Steps for a lip sweeping round a right-angle corner.
 const CORNER_STEPS := 4
@@ -51,8 +48,6 @@ static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain)
 	for s in segments:
 		faces += _lip(s.p0, s.p1, s.o, s.top, _lip_scale(s))
 		faces.append(_face(s))
-		if s.o.y < -0.3:
-			faces.append(_rim(s))
 		if not s.water and s.o.y > -0.3:
 			_shadow(shadow, s)
 	faces += _corners(segments)
@@ -215,20 +210,6 @@ static func _face(s: Dictionary) -> Array:
 
 static func _lip_scale(s: Dictionary) -> float:
 	return HALF_CLIFF_LIP if s.top - s.bottom <= 0.5 else 1.0
-
-
-## The dark rim along the far edge of a cliff facing away from the camera:
-## a strip hanging just behind the lip, facing back toward the camera, so it
-## outlines the drop against the lower ground beyond.
-static func _rim(s: Dictionary) -> Array:
-	var out: Vector2 = s.o * (LIP[3].x * _lip_scale(s) + FACE_OFFSET)
-	var top: float = s.top - 0.02
-	var pts := [_at(s.p0 + out, top), _at(s.p1 + out, top),
-		_at(s.p1 + out, top - RIM_DEPTH), _at(s.p0 + out, top - RIM_DEPTH)]
-	var u0 := _along(s.p0, s.o)
-	var u1: float = u0 + s.p0.distance_to(s.p1)
-	return [pts, Vector3(-s.o.x, 0, -s.o.y), GridWorld.Tex.LIP,
-		[Vector2(u0, 0.8), Vector2(u1, 0.8), Vector2(u1, 0.95), Vector2(u0, 0.95)]]
 
 
 ## A strip of shade on the ground at the foot of a face, fading outward.
