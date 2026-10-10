@@ -146,7 +146,7 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 	var mound := kind == 3
 	var half := kind == 0 or (mound and rng.randf() < 0.5)
 	var size := Vector2i(rng.randi_range(1, 3), rng.randi_range(1, 3)) if mound \
-		else Vector2i(rng.randi_range(2, 5), rng.randi_range(2, 5))
+		else Vector2i(rng.randi_range(2, 7), rng.randi_range(2, 7))
 	var rect := Rect2i(
 		Vector2i(rng.randi_range(5, map_size.x - size.x - 5), rng.randi_range(5, map_size.y - size.y - 5)),
 		size)
@@ -187,8 +187,11 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 			towers.append(rect)
 		else:
 			set_slope(slope, 0, slope_tile, up_dir)
-		if size.x >= 3 and size.y >= 3 and rng.randf() < 0.6:
-			_cut_corners(rect, layers, Tile.HALF_WEDGE if half else Tile.WEDGE)
+		# Cut no deeper than leaves the middle of every side (where the ramp lands) intact.
+		var max_cut := mini((size.x - 1) / 2, (size.y - 1) / 2)
+		if max_cut >= 1 and rng.randf() < 0.7:
+			var depth := rng.randi_range(maxi(1, max_cut - 1), max_cut)
+			_cut_corners(rect, layers, Tile.HALF_WEDGE if half else Tile.WEDGE, depth)
 
 	for c in claim:
 		reserved[c] = true
@@ -196,11 +199,19 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 	return true
 
 
-## Replaces a platform's corner cells with wedges, solid side inward.
-func _cut_corners(rect: Rect2i, layers: int, wedge: Tile) -> void:
+## Cuts each corner of a platform off at 45 degrees, depth cells along each
+## side: a diagonal line of wedges (solid side inward) with the cells
+## outside it cleared back to ground.
+func _cut_corners(rect: Rect2i, layers: int, wedge: Tile, depth: int) -> void:
 	for corner in _rect_corners(rect):
-		for layer in layers:
-			set_corner(corner.cell, layer, wedge, corner.inward)
+		for i in depth:
+			for j in depth - i:
+				var cell: Vector2i = corner.cell + Vector2i(i * corner.inward.x, j * corner.inward.y)
+				for layer in layers:
+					if i + j == depth - 1:
+						set_corner(cell, layer, wedge, corner.inward)
+					else:
+						set_cell_item(Vector3i(cell.x, layer, cell.y), INVALID_CELL_ITEM)
 
 
 ## Rings a platform with ramps rising toward it and outer corner slopes.
