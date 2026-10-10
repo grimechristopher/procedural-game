@@ -32,6 +32,8 @@ Specs for each asset type are in `README.md`.
       the grassy hill ramp). Stairs are only for man-made places (town
       platforms, shrines, ruins), never on roads where carts go.
 - [ ] **Distant mountain skybox** like BW's.
+- [ ] **Day-night lighting**, which is where shadows come from (cliffs,
+      buildings, trees, the player). The terrain draws none of its own.
 - [ ] **Grass variants** (2–3 tiles) scattered to break the repetition.
 - [ ] **Snow**: snow-covered grass, cliff tops and roofs, snowy pine
       (already drafted), for winter and snowy areas from the concept art.

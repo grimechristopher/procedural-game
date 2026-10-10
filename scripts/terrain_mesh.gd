@@ -15,10 +15,9 @@ extends RefCounted
 ## - Full cliffs that step back one at a time (terraces) are HGSS-style
 ##   banks: the face slopes down across the whole cell at the cliff's foot
 ##   (the world makes that cell impassable), wrapping round outer corners.
-## - Other faces run straight down every cliff from the band, rock on full cliffs and earth
-##   on half cliffs, round the curve of outer corners, with a soft shadow on
-##   the ground at their foot (not behind cliffs facing away from the
-##   camera, where it'd be hidden anyway).
+## - Other faces run straight down every cliff from the band, rock on full
+##   cliffs and earth on half cliffs, round the curve of outer corners.
+##   (No cast shadows: those belong to a day-night system, later.)
 ## - Ramps are grassy slopes with the cliff's band running down their
 ##   sides and the cliff's face cut to their slope below it, so they read as
 ##   part of the cliff they climb.
@@ -45,8 +44,6 @@ const ARC_STEPS := 3
 const LIFT := 0.003
 const FACE_OFFSET := 0.01
 const WATER_SURFACE := -0.25
-const SHADOW_WIDTH := 0.45
-const SHADOW_ALPHA := 0.35
 
 const T := GridWorld.Tile
 const SOLID_TOPS := [T.FULL, T.FULL_DIRT, T.ROCK, T.HALF]
@@ -76,16 +73,6 @@ static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain)
 	mesh.name = "Terrain"
 	mesh.mesh = world._build_mesh(b.faces, {}, world.block_material())
 	root.add_child(mesh)
-	var shadows := MeshInstance3D.new()
-	shadows.name = "Shadows"
-	shadows.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	var mat := StandardMaterial3D.new()
-	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	mat.vertex_color_use_as_albedo = true
-	b.shadow.set_material(mat)
-	shadows.mesh = b.shadow.commit()
-	root.add_child(shadows)
 	return root
 
 
@@ -94,7 +81,6 @@ var heights: PackedInt32Array
 var terrain: Terrain
 var size: Vector2i
 var faces := []
-var shadow := SurfaceTool.new()
 ## Per cell: Kind, the top of the solid (hidden) stack in blocks, and for
 ## ramps the layer they're in.
 var kind := PackedInt32Array()
@@ -108,7 +94,6 @@ func _init(w: GridWorld, h: PackedInt32Array, t: Terrain) -> void:
 	heights = h
 	terrain = t
 	size = w.map_size
-	shadow.begin(Mesh.PRIMITIVE_TRIANGLES)
 
 func run() -> void:
 	_classify()
@@ -277,7 +262,6 @@ func _sides(c: Vector2i, raised: bool) -> void:
 	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
 	for d in exposed[c]:
 		var bottom: float = exposed[c][d][0]
-		var water: bool = exposed[c][d][1]
 		var o := Vector2(d)
 		var t := Vector2(-d.y, d.x)
 		var mid := center + o * 0.5
@@ -294,8 +278,6 @@ func _sides(c: Vector2i, raised: bool) -> void:
 			var a := mid if half == 1 else mid - t * 0.5
 			var b := mid + t * 0.5 if half == 1 else mid
 			_face(a, b, o, solid[i], bottom, tex)
-			if not water and o.y > -0.3:
-				_shadow(a, b, o, bottom)
 
 ## Whether c's cliff on side d is an HGSS-style bank: a block high, with a
 ## bank at its foot.
@@ -364,8 +346,6 @@ func _round_corner(c: Vector2i, q: Vector2i, top: float, tile: int) -> void:
 	var center := Vector2(c.x + 0.5, c.y + 0.5)
 	var bottom_x: float = exposed[c][Vector2i(q.x, 0)][0]
 	var bottom_z: float = exposed[c][Vector2i(0, q.y)][0]
-	var water_x: bool = exposed[c][Vector2i(q.x, 0)][1]
-	var water_z: bool = exposed[c][Vector2i(0, q.y)][1]
 	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
 	var e := 0.5 + FACE_OFFSET
 	var r := CORNER_RADIUS
@@ -393,10 +373,6 @@ func _round_corner(c: Vector2i, q: Vector2i, top: float, tile: int) -> void:
 	var oy := Vector2(0, q.y)
 	_face(x_side, x_end, ox, top, bottom_x, tex)
 	_face(y_end, y_side, oy, top, bottom_z, tex)
-	if not water_x and ox.y > -0.3:
-		_shadow(x_side, x_end, ox, bottom_x)
-	if not water_z and oy.y > -0.3:
-		_shadow(y_end, y_side, oy, bottom_z)
 	var bottom := minf(bottom_x, bottom_z)
 	var along := 0.0
 	for k in ARC_STEPS:
@@ -411,11 +387,6 @@ func _round_corner(c: Vector2i, q: Vector2i, top: float, tile: int) -> void:
 			Vector3(o.x, 0, o.y), tex,
 			[Vector2(along, 0), Vector2(along + length, 0), Vector2(along + length, top - bottom), Vector2(along, top - bottom)]])
 		along += length
-		if not (water_x or water_z) and o.y > -0.3:
-			var n0 := l0 - Vector2(e - r, e - r)
-			var n1 := l1 - Vector2(e - r, e - r)
-			_shadow(d0, d1, o, bottom, Vector2(n0.x * q.x, n0.y * q.y).normalized(),
-				Vector2(n1.x * q.x, n1.y * q.y).normalized())
 
 
 # --- Wedges ------------------------------------------------------------------
@@ -453,8 +424,6 @@ func _wedge(c: Vector2i) -> void:
 	var o := -s.normalized()
 	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
 	_face(p0, p1, o, top, bottom, tex)
-	if o.y > -0.3:
-		_shadow(p0, p1, o, bottom)
 
 # --- Ramps -------------------------------------------------------------------
 
@@ -505,8 +474,6 @@ func _ramp(c: Vector2i) -> void:
 		faces.append([[_at(a + inner, base) + lift, _at(b + inner, base + rise) + lift,
 			_at(b, base + rise) + lift, _at(a, base) + lift], n if n.y > 0.0 else -n, band_tex,
 			[Vector2(0, 1.0 - BAND), Vector2(u1, 1.0 - BAND), Vector2(u1, 0.999), Vector2(0, 0.999)]])
-		if o.y > -0.3 and nh >= 0:
-			_shadow(a, b, o, floor_h)
 
 
 ## A face below an edge that slopes from top_a at a to top_b at b, down to
@@ -592,25 +559,6 @@ func _face(a: Vector2, b: Vector2, o: Vector2, top: float, bottom: float, tex: i
 	faces.append([[_at(a + out, top), _at(b + out, top), _at(b + out, bottom), _at(a + out, bottom)],
 		Vector3(o.x, 0, o.y), tex,
 		[Vector2(u0, 0), Vector2(u1, 0), Vector2(u1, top - bottom), Vector2(u0, top - bottom)]])
-
-## A strip of shade on the ground at the foot of a face, fading outward
-## (along o, or along out_a and out_b at each end, round a curve).
-func _shadow(a: Vector2, b: Vector2, o: Vector2, bottom: float, out_a := Vector2.ZERO, out_b := Vector2.ZERO) -> void:
-	if out_a == Vector2.ZERO:
-		out_a = o
-		out_b = o
-	var y := bottom + 0.004
-	var near0 := Vector3(a.x, y, a.y)
-	var near1 := Vector3(b.x, y, b.y)
-	var far0 := near0 + Vector3(out_a.x, 0, out_a.y) * SHADOW_WIDTH
-	var far1 := near1 + Vector3(out_b.x, 0, out_b.y) * SHADOW_WIDTH
-	var dark := Color(0, 0, 0, SHADOW_ALPHA)
-	var clear := Color(0, 0, 0, 0)
-	for v in [[near0, dark], [near1, dark], [far1, clear],
-			[near0, dark], [far1, clear], [far0, clear]]:
-		shadow.set_color(v[1])
-		shadow.set_normal(Vector3.UP)
-		shadow.add_vertex(v[0])
 
 
 static func _at(p: Vector2, y: float) -> Vector3:

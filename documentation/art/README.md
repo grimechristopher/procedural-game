@@ -186,8 +186,8 @@ below it.
   shows only its top 8 rows, so those make a complete face on their own;
   the bottom rows continue it for taller faces.
 
-The ground at the foot of each face gets a soft shadow in game, so don't
-draw one into the face tiles.
+Don't draw shadows into the tiles, on faces or on the ground at their
+foot: shadows will come from a day-night lighting system later.
 
 ### Ground transitions
 
