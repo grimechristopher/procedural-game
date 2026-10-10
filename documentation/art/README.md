@@ -28,9 +28,12 @@ General rules for everything:
 - **Style target:** Pokémon Black & White / HGSS overworlds — original art in
   that style, never traced or edited from Nintendo sprites. See
   `documentation/concept/` for the look of the world.
-- The camera is fixed, facing north and pitched 59° down (HGSS's camera). Sprites (player,
-  props, crops) stand upright and the game stretches them vertically by
-  1/cos(59°), so **draw them as if seen straight on**.
+- The camera is fixed, facing north and pitched 59° down (HGSS's camera).
+  The world is stretched so **every texel looks the same size on screen**:
+  blocks are tan(59°) ≈ 1.67 units tall, so a one-block cliff face shows
+  as exactly one tile, and sprites (player, props, crops) stand upright,
+  stretched by the same factor. So **draw everything straight on at 16 px
+  per tile**; the player ends up just under two tiles tall.
 
 ## Aseprite setup
 

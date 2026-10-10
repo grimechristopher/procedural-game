@@ -60,12 +60,16 @@ enum Tile {
 ## Prop tiles, in the order of their sprites in assets/props.png.
 const PROP_SPRITES := [Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH, Tile.TALL_GRASS]
 const PROP_SPRITE_SIZE := Vector2i(32, 48)
-## Sprites (props, crops, the player) stand upright and are stretched
-## vertically by 1 / cos(pitch), so from the fixed camera they look as if
-## they faced it square on, without leaning into the cell behind them.
 ## The pitch is HGSS's and Platinum's field camera (see FollowCamera).
 const CAMERA_PITCH_DEGREES := 59.05
-const SPRITE_STRETCH := 1.0 / cos(deg_to_rad(CAMERA_PITCH_DEGREES))
+## Everything is scaled so a texel looks the same size on screen wherever it
+## is: a block is tan(pitch) tall, so its 16-texel face looks exactly as tall
+## as a ground tile looks deep (a one-block cliff reads as one tile, as in
+## Pokemon). Models are built a unit tall and stretched to this height.
+const BLOCK_HEIGHT := tan(deg_to_rad(CAMERA_PITCH_DEGREES))
+## Sprites (props, crops, the player) stand upright and are stretched by
+## the same factor, so their texels match the ground's too.
+const SPRITE_STRETCH := BLOCK_HEIGHT
 
 ## Gameplay tags per tile. Systems like farming ask what a cell is tagged
 ## with (cell_tags / has_tag) rather than checking for particular tiles.
@@ -134,7 +138,7 @@ var _building_meshes: Node3D
 
 
 func _ready() -> void:
-	cell_size = Vector3.ONE
+	cell_size = Vector3(1, BLOCK_HEIGHT, 1)
 	cell_center_y = false
 	mesh_library = _build_mesh_library()
 	_building_meshes = Node3D.new()
@@ -1178,6 +1182,8 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh 
 		else:
 			tex = skin.top if n.y > 0.99 else (skin.slope if n.y > 0.1 else (Tex.DIRT if n.y < -0.5 else skin.side))
 		var uvs: Array = face[3] if face.size() > 3 else []
+		# Stretching y to BLOCK_HEIGHT tilts slope normals toward horizontal.
+		var shade_n := Vector3(n.x, n.y / BLOCK_HEIGHT, n.z).normalized()
 		for i in range(1, pts.size() - 1):
 			var corners := [0, i, i + 1]
 			# Godot treats clockwise as front-facing.
@@ -1185,10 +1191,10 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh 
 				corners = [0, i + 1, i]
 			for k in corners:
 				var v: Vector3 = pts[k]
-				st.set_normal(n)
+				st.set_normal(shade_n)
 				st.set_uv(Vector2(tex % TEX_COLS, tex / TEX_COLS))
 				st.set_uv2(uvs[k] if not uvs.is_empty() else _face_uv(v, n, top_y))
-				st.add_vertex(v)
+				st.add_vertex(Vector3(v.x, v.y * BLOCK_HEIGHT, v.z))
 	st.set_material(mat)
 	return st.commit(into)
 

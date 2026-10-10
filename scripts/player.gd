@@ -121,7 +121,7 @@ func _try_step(dir: Vector2i) -> bool:
 		return false
 	_hold = 0.0
 	_from = world.cell_to_world(cell, layer)
-	_mid_y = world.crossing_height(cell, layer, dir)
+	_mid_y = world.crossing_height(cell, layer, dir) * world.cell_size.y
 	_left_foot = not _left_foot
 	cell += dir
 	layer = next_layer
