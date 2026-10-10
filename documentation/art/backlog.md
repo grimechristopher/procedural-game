@@ -25,8 +25,8 @@ Specs for each asset type are in `README.md`.
 - [ ] **Edge transitions** between path, grass and farmland (rounded
       corner tiles, chosen from neighbouring tiles). Currently every edge is
       a hard square.
-- [ ] **Cliff edge pieces**: rounded ends and corners for ledges, and a
-      lighter lip along cliff tops (HGSS ledges).
+- [ ] **Rounded cliff corners** seen from above (the lip already curves
+      round corners; the plateau outline is still square or 45 degrees).
 - [ ] **Round-canopy trees** (HGSS/BW style) alongside the pines.
 - [ ] **Earth ramp tile** for the gaps through natural cliffs (currently
       the grassy hill ramp). Stairs are only for man-made places (town

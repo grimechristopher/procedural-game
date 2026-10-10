@@ -1,11 +1,12 @@
 class_name Edges
 extends RefCounted
 
-## The dressing on every raised edge of the terrain, HGSS style: a rounded
-## grass lip bulging over the edge, the face below it (earth for ledges on
-## gentle ground, rocky clods for cliffs), and a soft shadow on the ground
-## at its foot. Lips sweep round convex corners in a curve, so plateaus read
-## as rounded rather than as stacks of cubes.
+## The dressing on every cliff edge of the terrain, HGSS style: a rounded
+## grass lip bulging over the edge, the face below it (earth on gentle
+## ground, where cliffs are half a block, rocky clods where the terrain is
+## cliffy and cliffs are whole blocks), and a soft shadow on the ground at
+## its foot. Lips sweep round convex corners in a curve, so plateaus read as
+## rounded rather than as stacks of cubes.
 ##
 ## It's one mesh laid over the GridMap's blocks, built once per map from
 ## the heights; the blocks underneath still define where you can walk.
@@ -20,6 +21,9 @@ const LIP := [
 ## the lip tile over it.
 static var _lip_v := _lip_lengths()
 
+## Half cliffs get a smaller lip, so it doesn't swallow their face.
+const HALF_CLIFF_LIP := 0.65
+
 ## Faces sit this far in front of the blocks' own sides.
 const FACE_OFFSET := 0.01
 const WATER_SURFACE := -0.25
@@ -29,10 +33,10 @@ const SHADOW_ALPHA := 0.35
 const CORNER_STEPS := 4
 
 const T := GridWorld.Tile
-const SOLID_TOPS := [T.FULL, T.FULL_DIRT, T.ROCK]
-const WEDGES := [T.WEDGE, T.WEDGE_DIRT]
-## Things that can stand at the foot of a face without hiding it.
-const PROPS := [T.TREE, T.SNOW_TREE, T.BOULDER, T.BUSH, T.TALL_GRASS]
+const SOLID_TOPS := [T.FULL, T.FULL_DIRT, T.ROCK, T.HALF]
+const WEDGES := [T.WEDGE, T.WEDGE_DIRT, T.HALF_WEDGE, T.UPPER_HALF_WEDGE]
+## Pieces at the foot of a face that lean on it and hide it.
+const AGAINST := [T.HILL_RAMP, T.HALF_HILL_RAMP, T.UPPER_HALF_HILL_RAMP, T.STAIRS]
 
 
 ## A node holding the edge meshes for the world's current terrain.
@@ -42,7 +46,7 @@ static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain)
 	var shadow := SurfaceTool.new()
 	shadow.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for s in segments:
-		faces += _lip(s.p0, s.p1, s.o, s.top)
+		faces += _lip(s.p0, s.p1, s.o, s.top, _lip_scale(s))
 		faces.append(_face(s))
 		if not s.water:
 			_shadow(shadow, s)
@@ -69,7 +73,7 @@ static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain)
 
 
 ## Every exposed edge: { p0, p1 (ends, in cells), o (outward), top, bottom
-## (in blocks), tex, water }.
+## (in blocks), tex, water }. Heights come in steps of half a block.
 static func _find_segments(world: GridWorld, heights: PackedInt32Array, terrain: Terrain) -> Array:
 	var segments := []
 	var size := world.map_size
@@ -80,15 +84,19 @@ static func _find_segments(world: GridWorld, heights: PackedInt32Array, terrain:
 			if h < 0:
 				continue
 			var center := Vector2(x + 0.5, z + 0.5)
-			var tex: int = GridWorld.Tex.DIRT if terrain.is_cliffy(x, z) else GridWorld.Tex.LEDGE_SIDE
-			var top_item := world.get_cell_item(Vector3i(x, h - 1, z))
+			var tex: int = GridWorld.Tex.DIRT if terrain.is_cliffy(x, z) else GridWorld.Tex.EARTH_SIDE
+			var top_layer := (h - 1) / 2
+			var top_item := world.get_cell_item(Vector3i(x, top_layer, z))
 			if h > 0 and top_item in WEDGES:
 				# The wedge's slanted face runs between the two corners
-				# beside its solid one, facing away from it.
-				var s := Vector2(world._corner_dir(c, h - 1))
+				# beside its solid one, facing away from it, down to the
+				# ground beside it.
+				var si := world._corner_dir(c, top_layer)
+				var s := Vector2(si)
+				var low := heights[z * size.x + x - si.x]
 				segments.append({
 					p0 = center + Vector2(s.x, -s.y) * 0.5, p1 = center + Vector2(-s.x, s.y) * 0.5,
-					o = -s.normalized(), top = float(h), bottom = float(h - 1), tex = tex, water = false,
+					o = -s.normalized(), top = h / 2.0, bottom = maxi(low, 0) / 2.0, tex = tex, water = false,
 				})
 				continue
 			if h > 0 and top_item not in SOLID_TOPS:
@@ -105,26 +113,25 @@ static func _find_segments(world: GridWorld, heights: PackedInt32Array, terrain:
 					continue
 				if h == 0 and not water:
 					continue
-				# A ramp or stairs leaning on this face hides it.
-				var against := world.get_cell_item(Vector3i(n.x, h - 1, n.y))
-				if not water and against != GridMap.INVALID_CELL_ITEM and against not in PROPS:
+				# A ramp leaning on this face hides it.
+				if not water and world.get_cell_item(Vector3i(n.x, hn / 2, n.y)) in AGAINST:
 					continue
 				var t := Vector2(-d.y, d.x)
 				var mid := center + Vector2(d) * 0.5
 				segments.append({
 					p0 = mid - t * 0.5, p1 = mid + t * 0.5, o = Vector2(d),
-					top = float(h), bottom = WATER_SURFACE if water else float(hn), tex = tex, water = water,
+					top = h / 2.0, bottom = WATER_SURFACE if water else hn / 2.0, tex = tex, water = water,
 				})
 	return segments
 
 
 ## The lip along a straight edge: one strip per step of the cross-section,
 ## grass on top fading to a dark underside by the faces' shading.
-static func _lip(p0: Vector2, p1: Vector2, o: Vector2, top: float) -> Array:
+static func _lip(p0: Vector2, p1: Vector2, o: Vector2, top: float, scale: float) -> Array:
 	var faces := []
 	for i in LIP.size() - 1:
-		var a: Vector2 = LIP[i]
-		var b: Vector2 = LIP[i + 1]
+		var a: Vector2 = LIP[i] * scale
+		var b: Vector2 = LIP[i + 1] * scale
 		var pts := [
 			_at(p0 + o * a.x, top + a.y), _at(p1 + o * a.x, top + a.y),
 			_at(p1 + o * b.x, top + b.y), _at(p0 + o * b.x, top + b.y),
@@ -137,7 +144,7 @@ static func _lip(p0: Vector2, p1: Vector2, o: Vector2, top: float) -> Array:
 
 
 ## The lip swept round a corner at p, from facing o0 to facing o1.
-static func _sweep(p: Vector2, o0: Vector2, o1: Vector2, top: float) -> Array:
+static func _sweep(p: Vector2, o0: Vector2, o1: Vector2, top: float, scale: float) -> Array:
 	var faces := []
 	var a0 := o0.angle()
 	var turn := wrapf(o1.angle() - a0, -PI, PI)
@@ -147,8 +154,8 @@ static func _sweep(p: Vector2, o0: Vector2, o1: Vector2, top: float) -> Array:
 		var u1 := Vector2.from_angle(a0 + turn * (k + 1) / steps)
 		var mid := (u0 + u1).normalized()
 		for i in LIP.size() - 1:
-			var a: Vector2 = LIP[i]
-			var b: Vector2 = LIP[i + 1]
+			var a: Vector2 = LIP[i] * scale
+			var b: Vector2 = LIP[i + 1] * scale
 			var pts := [
 				_at(p + u0 * a.x, top + a.y), _at(p + u1 * a.x, top + a.y),
 				_at(p + u1 * b.x, top + b.y), _at(p + u0 * b.x, top + b.y),
@@ -171,7 +178,7 @@ static func _corners(segments: Array) -> Array:
 	var ends := {}
 	for s in segments:
 		for p in [s.p0, s.p1]:
-			var key := Vector3i(roundi(p.x * 2.0), roundi(p.y * 2.0), roundi(s.top * 4.0))
+			var key := Vector3i(roundi(p.x * 2.0), roundi(p.y * 2.0), roundi(s.top * 2.0))
 			if not ends.has(key):
 				ends[key] = []
 			ends[key].append(s)
@@ -185,7 +192,7 @@ static func _corners(segments: Array) -> Array:
 		var p := Vector2(key.x, key.y) / 2.0
 		var along_b: Vector2 = (b.p1 if b.p0.is_equal_approx(p) else b.p0) - p
 		if a.o.dot(along_b) < -0.01:
-			faces += _sweep(p, a.o, b.o, a.top)
+			faces += _sweep(p, a.o, b.o, a.top, minf(_lip_scale(a), _lip_scale(b)))
 	return faces
 
 
@@ -199,6 +206,10 @@ static func _face(s: Dictionary) -> Array:
 	var uvs := [Vector2(u0, 0), Vector2(u0 + length, 0),
 		Vector2(u0 + length, s.top - s.bottom), Vector2(u0, s.top - s.bottom)]
 	return [pts, Vector3(s.o.x, 0, s.o.y), s.tex, uvs]
+
+
+static func _lip_scale(s: Dictionary) -> float:
+	return HALF_CLIFF_LIP if s.top - s.bottom <= 0.5 else 1.0
 
 
 ## A strip of shade on the ground at the foot of a face, fading outward.

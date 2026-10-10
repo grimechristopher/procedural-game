@@ -18,7 +18,7 @@ GRASS_DARK = (84, 116, 58)
 GRASS_LIGHT = (150, 178, 96)
 GRASS_EDGE = (56, 82, 44)
 
-# Cliffs are warm earth, as in HGSS and BW ledges.
+# Cliffs are warm earth, as in HGSS and BW.
 ROCK = (184, 128, 78)
 ROCK_MID = (150, 100, 60)
 ROCK_DARK = (102, 66, 42)
@@ -307,19 +307,21 @@ def embers(px, ox, oy):
             put(px, ox, oy, x, y, EMBER[((x * 7 + y * 3) % 9) // 3 + (1 if (x + y) % 5 == 0 else 0)])
 
 
-def ledge_side(px, ox, oy):
-    """A ledge's earth face: shadowed under the grass lip, then soft earth
-    getting darker toward the foot, with a few streaks and pebbles."""
-    bands = [ROCK_DARK, ROCK_DARK, ROCK_MID, ROCK_LIGHT, ROCK_LIGHT, ROCK_LIGHT,
-             ROCK, ROCK, ROCK, ROCK, ROCK, ROCK_MID, ROCK, ROCK_MID, ROCK_MID, ROCK_DARK]
+def earth_side(px, ox, oy):
+    """The earth face of cliffs on gentle ground. Those are half a block
+    tall, showing only the top 8 rows, so those rows make a whole face on
+    their own: shadow under the grass lip, lit earth, then darker toward
+    the foot. The bottom rows carry on for taller faces."""
+    bands = [ROCK_DARK, ROCK_MID, ROCK_LIGHT, ROCK_LIGHT, ROCK, ROCK, ROCK_MID, ROCK_DARK,
+             ROCK, ROCK_LIGHT, ROCK, ROCK, ROCK_MID, ROCK, ROCK_MID, ROCK_DARK]
     for y, c in enumerate(bands):
         fill(px, ox, oy, c, [y])
     # Short vertical streaks of shade, staggered.
-    for x, y0, length in [(1, 6, 3), (5, 8, 4), (9, 5, 3), (12, 9, 3), (14, 6, 2), (7, 11, 2)]:
+    for x, y0, length in [(1, 3, 2), (5, 4, 2), (9, 3, 3), (12, 4, 2), (3, 10, 3), (10, 9, 4), (14, 11, 2)]:
         for y in range(y0, y0 + length):
             put(px, ox, oy, x, y, ROCK_MID)
     # Pebbles with a lit top.
-    for x, y in [(3, 10), (11, 12), (6, 4)]:
+    for x, y in [(6, 4), (13, 2), (7, 12), (1, 13)]:
         put(px, ox, oy, x, y, ROCK_LIGHT)
         put(px, ox, oy, x + 1, y, ROCK_LIGHT)
         put(px, ox, oy, x, y + 1, ROCK_DARK)
@@ -327,7 +329,7 @@ def ledge_side(px, ox, oy):
 
 
 def lip(px, ox, oy):
-    """The rounded grass lip over a ledge or cliff, wrapped over its curve
+    """The rounded grass lip over a cliff, wrapped over its curve
     from the top edge (row 0) to its underside (row 15): grass, a bright
     shoulder, then darkening into an outline."""
     bands = [GRASS, GRASS, GRASS_LIGHT, GRASS_LIGHT, GRASS_LIGHT, GRASS, GRASS, GRASS,
@@ -344,7 +346,7 @@ def lip(px, ox, oy):
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
-         ledge_side, lip]
+         earth_side, lip]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

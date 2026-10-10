@@ -134,16 +134,20 @@ overworld tutorial:
 - **Adding a tile:** append its drawing to the atlas, add its name at the end
   of `GridWorld.Tex`, and raise `TEX_ROWS` if the atlas grows a row.
 
-### Ledges and cliffs
+### Cliffs
 
-Raised edges are dressed by `scripts/edges.gd` from three tiles:
+Terrain heights come in half blocks. Gentle ground has **half cliffs**
+(half a block tall); cliffy ground has **full cliffs** (a block tall), which
+either step back a block at a time or stack straight up into walls two or
+three blocks tall. `scripts/edges.gd` dresses every cliff from three tiles:
 
-- `LIP`: the rounded grass lip over every edge, wrapped over its curve
-  from the top edge (row 0) to its underside (row 15). Keep the bright
-  shoulder near the top and the dark outline at the bottom.
-- `LEDGE_SIDE`: the one-tile earth face of ledges on gentle ground. Its
-  top rows sit in the lip's shadow.
-- `DIRT`: the rocky face of cliffs.
+- `LIP`: the rounded grass lip over every cliff edge, wrapped over its
+  curve from the top edge (row 0) to its underside (row 15). Keep the
+  bright shoulder near the top and the dark outline at the bottom.
+- `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff
+  shows only its top 8 rows, so those make a complete face on their own;
+  the bottom rows continue it for taller faces.
+- `DIRT`: the rocky face of full cliffs, one tile per block.
 
 The ground at the foot of each face gets a soft shadow in game, so don't
 draw one into the face tiles.

@@ -55,10 +55,28 @@ enum Tile {
 	BUILDING, BUILDING_DOOR,
 	# A full block topped with bare rock, for high ground.
 	ROCK,
+	# A wedge cut through only the top half of a block, its bottom half solid:
+	# the corner of a half cliff rising from half height.
+	UPPER_HALF_WEDGE,
+	# Grassy ramp from half height to the top of the block (the hill
+	# counterpart of UPPER_HALF_RAMP).
+	UPPER_HALF_HILL_RAMP,
+	# Props sunk half a block, for half-height ground.
+	TREE_LOW, SNOW_TREE_LOW, BOULDER_LOW, BUSH_LOW, TALL_GRASS_LOW,
 }
 
 ## Prop tiles, in the order of their sprites in assets/props.png.
 const PROP_SPRITES := [Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH, Tile.TALL_GRASS]
+## Each prop's sunken version, for standing on a half block.
+const PROP_LOW := {
+	Tile.TREE: Tile.TREE_LOW, Tile.SNOW_TREE: Tile.SNOW_TREE_LOW, Tile.BOULDER: Tile.BOULDER_LOW,
+	Tile.BUSH: Tile.BUSH_LOW, Tile.TALL_GRASS: Tile.TALL_GRASS_LOW,
+}
+## Solid props a path can be cleared through.
+const CLEARABLE := [Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH,
+	Tile.TREE_LOW, Tile.SNOW_TREE_LOW, Tile.BOULDER_LOW, Tile.BUSH_LOW]
+## Ramps the terrain uses to climb a half or whole step.
+const HILL_RAMPS := [Tile.HILL_RAMP, Tile.HALF_HILL_RAMP, Tile.UPPER_HALF_HILL_RAMP]
 const PROP_SPRITE_SIZE := Vector2i(32, 48)
 ## The pitch is HGSS's and Platinum's field camera (see FollowCamera).
 const CAMERA_PITCH_DEGREES := 59.05
@@ -82,6 +100,7 @@ const TAGS := {
 	Tile.WATER: [&"water"],
 	Tile.WATERFALL: [&"water"],
 	Tile.TALL_GRASS: [&"tall_grass"],
+	Tile.TALL_GRASS_LOW: [&"tall_grass"],
 	Tile.BUILDING_DOOR: [&"door"],
 }
 
@@ -90,7 +109,7 @@ const TAGS := {
 enum Tex {
 	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
 	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
-	LEDGE_SIDE, LIP,
+	EARTH_SIDE, LIP,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 5
@@ -118,11 +137,12 @@ const SETTLEMENT_RADIUS := 15.0
 const SETTLEMENT_BLEND := 8.0
 ## Cells over which the land falls away into ocean at the map's edge.
 const ISLAND_FALLOFF := 10.0
+## Highest ground, in blocks.
 const MAX_HEIGHT := 10
-## Ground this high or higher is bare rock.
+## Ground this many blocks high or higher is bare rock.
 const ROCK_LEVEL := 5
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
-const RAMP_CHANCE := 0.08
+const RAMP_CHANCE := 0.03
 ## Unreachable pockets this small get levelled if a ramp won't fit.
 const SMALL_POCKET := 8
 const ORTHOGONAL: Array[Vector2i] = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]
@@ -137,6 +157,8 @@ var buildings: Array[Dictionary] = []
 var _block_material: ShaderMaterial
 var _building_meshes: Node3D
 var _edges: Node3D
+## Per cell, how far (in steps) the ground may drop to a side neighbour.
+var _max_drop := PackedInt32Array()
 
 
 func _ready() -> void:
@@ -164,7 +186,7 @@ func generate(new_seed: int) -> void:
 	spawn_cell = map_size / 2
 
 	var heights := _shape_heights(terrain)
-	_build_terrain(terrain, heights)
+	_build_terrain(heights)
 
 	var reserved := {}
 	for x in range(spawn_cell.x - 2, spawn_cell.x + 3):
@@ -190,21 +212,33 @@ func generate(new_seed: int) -> void:
 
 # --- Terrain ------------------------------------------------------------------
 
-## Whole-block heights per cell (-1 for water) from the terrain's elevation,
-## flattened round the settlement, sunk into ocean at the edges, terraced so
-## no two side-by-side cells differ by more than one block, and smoothed of
-## one-cell knobs and pits.
+## Heights per cell, in half blocks ("steps"): 0 is ground level, 1 half a
+## block up, 2 a block, -1 water. Gentle ground climbs in half cliffs (one
+## step); cliffy ground in full cliffs (whole blocks), which stack up to
+## Terrain.cliff_tiers blocks straight up where the noise says so, or step
+## back one block at a time.
+##
+## Built from the terrain's elevation, flattened round the settlement, sunk
+## into ocean at the edges, terraced so no cell drops further than its
+## cliffs allow, and smoothed of one-cell knobs and pits.
 func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 	var heights := PackedInt32Array()
 	heights.resize(map_size.x * map_size.y)
+	_max_drop.resize(map_size.x * map_size.y)
 	for z in map_size.y:
 		for x in map_size.x:
+			var i := z * map_size.x + x
 			var e := terrain.elevation(x, z)
 			var edge := minf(minf(x, map_size.x - 1 - x), minf(z, map_size.y - 1 - z)) / ISLAND_FALLOFF
 			e = lerpf(-2.0, e, smoothstep(0.0, 1.0, edge))
 			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
-			e = lerpf(0.5, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
-			heights[z * map_size.x + x] = -1 if e < 0.0 else mini(floori(e), MAX_HEIGHT)
+			e = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
+			if terrain.is_cliffy(x, z):
+				_max_drop[i] = 2 * terrain.cliff_tiers(x, z)
+				heights[i] = -1 if e < 0.0 else 2 * mini(floori(e), MAX_HEIGHT)
+			else:
+				_max_drop[i] = 1
+				heights[i] = -1 if e < 0.0 else mini(floori(e * 2.0), MAX_HEIGHT * 2)
 	_terrace(heights)
 	for i in 3:
 		_despeckle(heights)
@@ -212,14 +246,17 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 	return heights
 
 
-## Lowers cells until none is more than a block above a side neighbour.
+## Lowers cells until none drops further to a side neighbour than its
+## cliffs allow: a step on gentle ground, its stack of whole blocks on
+## cliffy ground (which stays in whole blocks).
 func _terrace(heights: PackedInt32Array) -> void:
 	var changed := true
 	while changed:
 		changed = false
 		for z in map_size.y:
 			for x in map_size.x:
-				var h := heights[z * map_size.x + x]
+				var i := z * map_size.x + x
+				var h := heights[i]
 				if h < 1:
 					continue
 				var lowest := h
@@ -227,18 +264,24 @@ func _terrace(heights: PackedInt32Array) -> void:
 					var n := _height_at(heights, Vector2i(x, z) + d)
 					if n != -99:
 						lowest = mini(lowest, maxi(n, 0))
-				if h > lowest + 1:
-					heights[z * map_size.x + x] = lowest + 1
+				var top := lowest + _max_drop[i]
+				if _max_drop[i] > 1:
+					top -= top % 2
+				if h > top:
+					heights[i] = top
 					changed = true
 
 
 ## Knocks down cells standing above three or four of their side neighbours,
-## and fills in cells (or puddles) sunk below three or four of them.
+## and fills in cells (or puddles) sunk below three or four of them, by a
+## step (a whole block on cliffy ground).
 func _despeckle(heights: PackedInt32Array) -> void:
 	var source := heights.duplicate()
 	for z in map_size.y:
 		for x in map_size.x:
-			var h := source[z * map_size.x + x]
+			var i := z * map_size.x + x
+			var h := source[i]
+			var step := 2 if _max_drop[i] > 1 else 1
 			var above := 0
 			var below := 0
 			for d in ORTHOGONAL:
@@ -250,23 +293,22 @@ func _despeckle(heights: PackedInt32Array) -> void:
 				elif n > h:
 					below += 1
 			if above >= 3 and h > 0:
-				heights[z * map_size.x + x] = h - 1
+				heights[i] = maxi(h - step, 0)
 			elif below >= 3:
-				heights[z * map_size.x + x] = h + 1
+				heights[i] = h + step
 
 
-## Height at a cell, or -99 outside the map.
+## Height at a cell, in steps, or -99 outside the map.
 func _height_at(heights: PackedInt32Array, cell: Vector2i) -> int:
 	if cell.x < 0 or cell.y < 0 or cell.x >= map_size.x or cell.y >= map_size.y:
 		return -99
 	return heights[cell.y * map_size.x + cell.x]
 
 
-## Stacks blocks to each cell's height, then dresses the one-block steps
-## the way HGSS does: terraces with diagonal corners and the odd ramp up
-## them. (Edges dresses them as earth ledges on gentle ground and rocky
-## cliffs where the terrain is cliffy.)
-func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
+## Stacks blocks to each cell's height, then cuts plateaus' outside corners
+## diagonally and breaks the odd cliff with a ramp. (Edges dresses the
+## cliffs: earth faces on gentle ground, rock where the terrain is cliffy.)
+func _build_terrain(heights: PackedInt32Array) -> void:
 	for z in map_size.y:
 		for x in map_size.x:
 			var h := heights[z * map_size.x + x]
@@ -274,9 +316,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				set_ground(Vector2i(x, z), Tile.WATER)
 				continue
 			set_ground(Vector2i(x, z), Tile.GROUND)
-			for layer in h:
-				var top := layer == h - 1 and h >= ROCK_LEVEL
-				set_cell_item(Vector3i(x, layer, z), Tile.ROCK if top else Tile.FULL)
+			_stack_column(Vector2i(x, z), h)
 	var settled := SETTLEMENT_RADIUS + 2.0
 	for z in map_size.y:
 		for x in map_size.x:
@@ -290,11 +330,22 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				_maybe_ramp(Vector2i(x, z), heights)
 
 
-## Cuts a plateau's outside corner at 45 degrees: a cell
-## whose two neighbours on adjacent sides, and the diagonal between them,
-## are a block lower, with level plateau on the other sides and diagonal.
-## (Ground that keeps climbing diagonally stays stepped: wedging every step
-## would leave cells joined only at their corners.)
+## Full blocks up to a height in steps, topped with a half block on odd
+## steps, and bare rock on high ground.
+func _stack_column(cell: Vector2i, h: int) -> void:
+	var blocks := h / 2
+	for layer in blocks:
+		var rock := layer == blocks - 1 and h % 2 == 0 and h >= ROCK_LEVEL * 2
+		set_cell_item(Vector3i(cell.x, layer, cell.y), Tile.ROCK if rock else Tile.FULL)
+	if h % 2 == 1:
+		set_cell_item(Vector3i(cell.x, blocks, cell.y), Tile.HALF)
+
+
+## Cuts a plateau's outside corner at 45 degrees: a cell whose two
+## neighbours on adjacent sides, and the diagonal between them, are lower,
+## with level plateau on the other sides and diagonal. (Ground that keeps
+## climbing diagonally stays stepped: wedging every step would leave cells
+## joined only at their corners.)
 func _wedge_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
 	var h := _height_at(heights, cell)
 	if h < 1:
@@ -302,63 +353,100 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
 	for d in DIAGONAL:
 		var a := Vector2i(d.x, 0)
 		var b := Vector2i(0, d.y)
-		if _height_at(heights, cell + a) == h - 1 and _height_at(heights, cell + b) == h - 1 \
-				and _height_at(heights, cell + d) <= h - 1 and _height_at(heights, cell + d) >= 0 \
-				and _height_at(heights, cell - a) == h and _height_at(heights, cell - b) == h \
+		var low := _height_at(heights, cell + a)
+		var corner := _height_at(heights, cell + d)
+		if low < 0 or low >= h or _height_at(heights, cell + b) != low or corner < 0 or corner > low:
+			continue
+		if _height_at(heights, cell - a) == h and _height_at(heights, cell - b) == h \
 				and _height_at(heights, cell - d) == h:
-			set_corner(cell, h - 1, Tile.WEDGE, -d)
+			_wedge_column(cell, low, h, -d)
 			return
 
 
-## Now and then breaks a cliff step with an earthen ramp at its foot, where
+## Swaps the blocks of a column between heights low and high (in steps)
+## for wedges with their solid corner toward solid: whole wedges, a half
+## wedge on a half block, or an upper-half wedge where the cut starts
+## halfway up a block.
+func _wedge_column(cell: Vector2i, low: int, high: int, solid: Vector2i) -> void:
+	for layer in range(low / 2, (high + 1) / 2):
+		var cut_from_middle := low > layer * 2
+		var half_block := high < layer * 2 + 2
+		var tile := Tile.UPPER_HALF_WEDGE if cut_from_middle else (Tile.HALF_WEDGE if half_block else Tile.WEDGE)
+		set_corner(cell, layer, tile, solid)
+
+
+## Now and then breaks a cliff with a grassy ramp at its foot, where
 ## there's level ground behind to walk up from. (Stairs are for man-made
 ## places, so the wild never gets them.)
 func _maybe_ramp(cell: Vector2i, heights: PackedInt32Array) -> void:
 	for d in ORTHOGONAL:
-		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < RAMP_CHANCE and _can_hold_ramp(cell, d, heights):
-			set_slope(cell, _height_at(heights, cell), Tile.HILL_RAMP, d)
-			return
+		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < RAMP_CHANCE:
+			var piece := _ramp_piece(cell, d, heights)
+			if not piece.is_empty():
+				set_slope(cell, piece[1], piece[0], d)
+				return
 
 
-## Whether a ramp at cell rising toward dir would lead from level ground up
-## onto level ground a block higher.
-func _can_hold_ramp(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> bool:
+## The ramp, as [tile, layer], that would climb from cell up the cliff
+## toward dir, from level ground onto level ground a half or whole block
+## higher; or [] if none fits. A half block becomes a ramp up from half
+## height; nothing climbs a whole block from half height.
+func _ramp_piece(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> Array:
 	var h := _height_at(heights, cell)
-	if h < 0 or _height_at(heights, cell + dir) != h + 1 or _height_at(heights, cell - dir) != h:
-		return false
-	if get_cell_item(Vector3i(cell.x, h, cell.y)) != INVALID_CELL_ITEM:
-		return false
+	var up := _height_at(heights, cell + dir)
+	var rise := up - h
+	if h < 0 or _height_at(heights, cell - dir) != h or (rise != 1 and rise != 2):
+		return []
+	if rise == 2 and h % 2 == 1:
+		return []
 	var above := cell + dir
-	if get_cell_item(Vector3i(above.x, h, above.y)) not in [Tile.FULL, Tile.ROCK]:
-		return false  # the top of the step is a wedge or otherwise not walkable
-	var ground := ground_tile(cell)
-	return h > 0 or ground == Tile.GROUND or ground == Tile.FLOWERS
+	if get_cell_item(Vector3i(above.x, (up - 1) / 2, above.y)) not in [Tile.FULL, Tile.ROCK, Tile.HALF]:
+		return []  # the top of the cliff is a wedge or otherwise not walkable
+	if h == 0 and ground_tile(cell) != Tile.GROUND and ground_tile(cell) != Tile.FLOWERS:
+		return []
+	var layer := h / 2
+	if h % 2 == 0:
+		if get_cell_item(Vector3i(cell.x, layer, cell.y)) != INVALID_CELL_ITEM:
+			return []
+		return [Tile.HILL_RAMP if rise == 2 else Tile.HALF_HILL_RAMP, layer]
+	if get_cell_item(Vector3i(cell.x, layer, cell.y)) != Tile.HALF \
+			or get_cell_item(Vector3i(cell.x, layer + 1, cell.y)) != INVALID_CELL_ITEM:
+		return []
+	return [Tile.UPPER_HALF_HILL_RAMP, layer]
 
 
 ## Forests, boulders, bushes and tall grass on level ground, away from
-## steps (so stairs and ramps stay approachable) and anything reserved.
+## cliffs (so ramps stay approachable) and anything reserved. Props on a
+## half block are sunk to stand on it.
 func _place_scenery(terrain: Terrain, heights: PackedInt32Array, reserved: Dictionary) -> void:
 	for z in range(1, map_size.y - 1):
 		for x in range(1, map_size.x - 1):
 			var cell := Vector2i(x, z)
 			var h := heights[z * map_size.x + x]
-			if h < 0 or reserved.has(cell) or get_cell_item(Vector3i(x, h, z)) != INVALID_CELL_ITEM:
+			var layer := (h + 1) / 2
+			if h < 0 or reserved.has(cell) or get_cell_item(Vector3i(x, layer, z)) != INVALID_CELL_ITEM:
 				continue
 			if h == 0 and ground_tile(cell) != Tile.GROUND and ground_tile(cell) != Tile.FLOWERS:
 				continue
+			if h % 2 == 1 and get_cell_item(Vector3i(x, h / 2, z)) != Tile.HALF:
+				continue
 			var level := true
 			for d in ORTHOGONAL:
-				if _height_at(heights, cell + d) != h or get_cell_item(Vector3i(x + d.x, h, z + d.y)) in [Tile.STAIRS, Tile.HILL_RAMP]:
+				if _height_at(heights, cell + d) != h \
+						or get_cell_item(Vector3i(x + d.x, h / 2, z + d.y)) in HILL_RAMPS:
 					level = false
 			if not level:
 				continue
+			var prop := -1
 			var roll := Terrain.cell_hash(x, z, 7)
 			if roll < terrain.forest(x, z):
-				set_cell_item(Vector3i(x, h, z), Tile.TREE)
+				prop = Tile.TREE
 			elif roll > 0.985:
-				set_cell_item(Vector3i(x, h, z), Tile.BOULDER if h >= ROCK_LEVEL or roll > 0.993 else Tile.BUSH)
+				prop = Tile.BOULDER if h >= ROCK_LEVEL * 2 or roll > 0.993 else Tile.BUSH
 			elif terrain.is_tall_grass(x, z):
-				set_cell_item(Vector3i(x, h, z), Tile.TALL_GRASS)
+				prop = Tile.TALL_GRASS
+			if prop >= 0:
+				set_cell_item(Vector3i(x, layer, z), PROP_LOW[prop] if h % 2 == 1 else prop)
 
 
 ## Makes sure everything on land can be walked to from spawn. Each round
@@ -404,7 +492,7 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 func _top_surface(cell: Vector2i) -> Dictionary:
 	for layer in range(TOP_LAYER, GROUND_LAYER - 1, -1):
 		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
-		if item == INVALID_CELL_ITEM or _is_thin(item) or item == Tile.TALL_GRASS:
+		if item == INVALID_CELL_ITEM or _is_thin(item) or _is_tall_grass(item):
 			continue
 		return _surface(cell, layer)
 	return {}
@@ -457,9 +545,9 @@ func _label_pockets(surface: Array, reached: PackedByteArray) -> PackedInt32Arra
 
 
 ## Brings a small pocket level with reachable flat ground beside it (or,
-## failing that, with the ground most of its sides meet),
-## adding or removing a block per cell, and clears away slopes and wedges
-## around it that were shaped for the old heights.
+## failing that, with the ground most of its sides meet), restacking each
+## cell, and undoes wedges and ramps around it that were shaped for the
+## old heights.
 func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
 		reserved: Dictionary) -> bool:
 	var target := -99
@@ -469,7 +557,7 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 			var hr := _height_at(heights, r)
 			var ri := r.y * map_size.x + r.x
 			if hr >= 0 and reached[ri] and _rise(surface[ri].get("tile", -1)) == 0.0 and not surface[ri].is_empty() \
-					and absi(hr - _height_at(heights, c)) == 1:
+					and absi(hr - _height_at(heights, c)) <= 2 and hr != _height_at(heights, c):
 				target = hr
 				break
 		if target != -99:
@@ -481,7 +569,8 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 		for c in cells:
 			for d in ORTHOGONAL:
 				var hn := _height_at(heights, c + d)
-				if hn >= 0 and absi(hn - _height_at(heights, c)) == 1:
+				var hc := _height_at(heights, c)
+				if hn >= 0 and hn != hc and absi(hn - hc) <= 2:
 					votes[hn] = votes.get(hn, 0) + 1
 		for hn in votes:
 			if target == -99 or votes[hn] > votes[target]:
@@ -490,35 +579,41 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 		return false
 	for c in cells:
 		var h := _height_at(heights, c)
-		if absi(h - target) != 1 or reserved.has(c):
+		if h == target or absi(h - target) > 2 or reserved.has(c):
 			continue
-		for layer in range(maxi(h, 0), TOP_LAYER + 1):
+		for layer in range(0, TOP_LAYER + 1):
 			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
-		if target < h:
-			set_cell_item(Vector3i(c.x, h - 1, c.y), INVALID_CELL_ITEM)
-		else:
-			set_cell_item(Vector3i(c.x, h, c.y), Tile.FULL)
+		_stack_column(c, target)
 		heights[c.y * map_size.x + c.x] = target
 		for d in ORTHOGONAL + DIAGONAL + [Vector2i.ZERO]:
 			var n: Vector2i = c + d
-			var hn := _height_at(heights, n)
-			if hn < 0:
+			if _height_at(heights, n) < 0:
 				continue
-			for layer in [hn - 1, hn]:
-				var item := get_cell_item(Vector3i(n.x, layer, n.y))
-				if item == Tile.WEDGE:
-					set_cell_item(Vector3i(n.x, layer, n.y), Tile.FULL)
-				elif item == Tile.HILL_RAMP and layer == hn \
-						and _height_at(heights, n + _up_dir(n, layer)) == hn + 1:
-					continue  # Still leads up a step, so keep it.
-				elif item in [Tile.HILL_RAMP, Tile.CORNER_INNER, Tile.CORNER_OUTER]:
-					set_cell_item(Vector3i(n.x, layer, n.y), INVALID_CELL_ITEM)
+			_unshape(n, heights)
 			surface[n.y * map_size.x + n.x] = _top_surface(n)
 	return true
 
 
+## Turns a column's wedges back into blocks, and takes out ramps that no
+## longer lead up a cliff, after the heights around it changed.
+func _unshape(cell: Vector2i, heights: PackedInt32Array) -> void:
+	var h := _height_at(heights, cell)
+	for layer in range(0, TOP_LAYER + 1):
+		var pos := Vector3i(cell.x, layer, cell.y)
+		var item := get_cell_item(pos)
+		match item:
+			Tile.WEDGE, Tile.WEDGE_DIRT, Tile.UPPER_HALF_WEDGE:
+				set_cell_item(pos, Tile.FULL)
+			Tile.HALF_WEDGE:
+				set_cell_item(pos, Tile.HALF)
+			Tile.HILL_RAMP, Tile.HALF_HILL_RAMP, Tile.UPPER_HALF_HILL_RAMP:
+				var rise := 2 if item == Tile.HILL_RAMP else 1
+				if _height_at(heights, cell + _up_dir(cell, layer)) != h + rise:
+					set_cell_item(pos, Tile.HALF if item == Tile.UPPER_HALF_HILL_RAMP else INVALID_CELL_ITEM)
+
+
 ## Joins the pocket containing u to reachable ground next to it, if it
-## can: a ramp up or down a one-block step, or clearing a tree or rock
+## can: a ramp up or down a half or whole block, or clearing a tree or rock
 ## between u and reachable ground at the same level.
 func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
 		reserved: Dictionary) -> bool:
@@ -529,22 +624,23 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 		if hr < 0:
 			continue
 		var ri := r.y * map_size.x + r.x
-		if reached[ri] and absi(hu - hr) == 1:
+		if reached[ri] and hu != hr and absi(hu - hr) <= 2:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
-			if not reserved.has(low) and _can_hold_ramp(low, dir, heights):
-				set_slope(low, mini(hu, hr), Tile.HILL_RAMP, dir)
+			var piece := _ramp_piece(low, dir, heights)
+			if not reserved.has(low) and not piece.is_empty():
+				set_slope(low, piece[1], piece[0], dir)
 				surface[low.y * map_size.x + low.x] = _top_surface(low)
 				return true
 		elif not reached[ri] and hr == hu and surface[ri].is_empty() and not reserved.has(r):
 			# r is blocked; clear it if reachable ground at our level lies beyond.
-			var item := get_cell_item(Vector3i(r.x, hr, r.y))
-			if item not in [Tile.TREE, Tile.BOULDER, Tile.BUSH]:
+			var prop_at := Vector3i(r.x, (hr + 1) / 2, r.y)
+			if get_cell_item(prop_at) not in CLEARABLE:
 				continue
 			for d2 in ORTHOGONAL:
 				var b := r + d2
 				if _height_at(heights, b) == hu and reached[b.y * map_size.x + b.x] and not surface[b.y * map_size.x + b.x].is_empty():
-					set_cell_item(Vector3i(r.x, hr, r.y), INVALID_CELL_ITEM)
+					set_cell_item(prop_at, INVALID_CELL_ITEM)
 					surface[ri] = _top_surface(r)
 					return true
 	return false
@@ -850,12 +946,12 @@ func _surface(cell: Vector2i, layer: int) -> Dictionary:
 	var item := get_cell_item(pos)
 	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item) or _is_thin(item) \
 			or item == Tile.SHIPPING_BIN or item == Tile.SHOP_STALL or _is_solid_scenery(item) \
-			or item == Tile.TALL_GRASS:
+			or _is_tall_grass(item):
 		return {}
 	var top := _span(item, layer).y
 	for above in range(layer + 1, TOP_LAYER + 1):
 		var other := get_cell_item(Vector3i(cell.x, above, cell.y))
-		if other == INVALID_CELL_ITEM or _is_thin(other) or other == Tile.TALL_GRASS:
+		if other == INVALID_CELL_ITEM or _is_thin(other) or _is_tall_grass(other):
 			continue
 		if _span(other, above).x < top + HEADROOM - EPS:
 			return {}
@@ -885,9 +981,16 @@ func _corner_passable(cell: Vector2i, corner: Vector2i, h: float) -> bool:
 		# Walking over the wedge's solid corner on top of it.
 		if is_equal_approx(span.y, h) and corner == solid:
 			return true
-		# Walking past its open corner, on the floor it stands on.
+		# Walking past its open corner, on the floor it stands on (its own
+		# solid bottom half, for an upper-half wedge).
+		if corner != -solid:
+			continue
+		if item == Tile.UPPER_HALF_WEDGE:
+			if is_equal_approx(span.x + 0.5, h):
+				return true
+			continue
 		var below := get_cell_item(Vector3i(cell.x, layer - 1, cell.y))
-		if corner == -solid and is_equal_approx(span.x, h) and below != INVALID_CELL_ITEM \
+		if is_equal_approx(span.x, h) and below != INVALID_CELL_ITEM and not _is_wedge(below) \
 				and is_equal_approx(_span(below, layer - 1).y, h):
 			return true
 	return false
@@ -994,7 +1097,11 @@ func _corner_blocked(cell: Vector2i, corner: Vector2i, h: float) -> bool:
 
 
 static func _is_wedge(tile: int) -> bool:
-	return tile == Tile.WEDGE or tile == Tile.HALF_WEDGE or tile == Tile.WEDGE_DIRT
+	return tile in [Tile.WEDGE, Tile.HALF_WEDGE, Tile.WEDGE_DIRT, Tile.UPPER_HALF_WEDGE]
+
+
+static func _is_tall_grass(tile: int) -> bool:
+	return tile == Tile.TALL_GRASS or tile == Tile.TALL_GRASS_LOW
 
 
 static func _is_corner_slope(tile: int) -> bool:
@@ -1006,8 +1113,7 @@ static func _is_diag_ramp(tile: int) -> bool:
 
 
 static func _is_solid_scenery(tile: int) -> bool:
-	return tile in [Tile.WATER, Tile.WATERFALL, Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH,
-		Tile.BUILDING, Tile.BUILDING_DOOR]
+	return tile in CLEARABLE or tile in [Tile.WATER, Tile.WATERFALL, Tile.BUILDING, Tile.BUILDING_DOOR]
 
 
 static func _is_thin(tile: int) -> bool:
@@ -1030,14 +1136,14 @@ static func _rise(tile: int) -> float:
 	match tile:
 		Tile.RAMP, Tile.HILL_RAMP, Tile.STAIRS, Tile.DIAG_RAMP: return 1.0
 		Tile.HALF_RAMP, Tile.HALF_HILL_RAMP, Tile.HALF_STAIRS, Tile.HALF_DIAG_RAMP, \
-				Tile.UPPER_HALF_RAMP, Tile.UPPER_HALF_STAIRS:
+				Tile.UPPER_HALF_RAMP, Tile.UPPER_HALF_STAIRS, Tile.UPPER_HALF_HILL_RAMP:
 			return 0.5
 	return 0.0
 
 
 ## Height a slope starts at within its cell.
 static func _base(tile: int) -> float:
-	return 0.5 if tile == Tile.UPPER_HALF_RAMP or tile == Tile.UPPER_HALF_STAIRS else 0.0
+	return 0.5 if tile in [Tile.UPPER_HALF_RAMP, Tile.UPPER_HALF_STAIRS, Tile.UPPER_HALF_HILL_RAMP] else 0.0
 
 
 # --- Meshes -----------------------------------------------------------------
@@ -1105,6 +1211,9 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.SHIPPING_BIN, "ShippingBin", _box_faces(Vector3(-0.4, 0, -0.32), Vector3(0.4, 0.6, 0.32))
 			+ _box_faces(Vector3(-0.45, 0.6, -0.38), Vector3(0.45, 0.7, 0.38)), wood],
 		[Tile.SHOP_STALL, "ShopStall", _shop_faces(), stone],
+		[Tile.UPPER_HALF_WEDGE, "UpperHalfWedge",
+			_box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.5, 0.5)) + _wedge_faces(0.5, 0.5), grass_block],
+		[Tile.UPPER_HALF_HILL_RAMP, "UpperHalfHillRamp", _ramp_faces(0.5, 0.5), hill],
 	]
 	for item in items:
 		lib.create_item(item[0])
@@ -1138,6 +1247,10 @@ func _build_mesh_library() -> MeshLibrary:
 		lib.create_item(tile)
 		lib.set_item_name(tile, Tile.keys()[tile].capitalize())
 		lib.set_item_mesh(tile, _prop_mesh(i, props_mat))
+		var low: int = PROP_LOW[tile]
+		lib.create_item(low)
+		lib.set_item_name(low, Tile.keys()[low].capitalize())
+		lib.set_item_mesh(low, _prop_mesh(i, props_mat, 0.5))
 	return lib
 
 
@@ -1179,14 +1292,15 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh 
 
 
 ## A prop sprite as an upright quad standing on the cell's centre, sized so
-## one texel matches the tileset's and stretched to face the camera.
-static func _prop_mesh(index: int, mat: Material) -> ArrayMesh:
+## one texel matches the tileset's and stretched to face the camera. sink
+## lowers it (in blocks) to stand on a half block below its cell.
+static func _prop_mesh(index: int, mat: Material, sink := 0.0) -> ArrayMesh:
 	var size := Vector2(PROP_SPRITE_SIZE) / 16.0
 	var up := Vector3(0, size.y * SPRITE_STRETCH, 0)
 	var u0 := float(index) / PROP_SPRITES.size()
 	var u1 := float(index + 1) / PROP_SPRITES.size()
-	var bl := Vector3(-size.x / 2, 0, 0)
-	var br := Vector3(size.x / 2, 0, 0)
+	var bl := Vector3(-size.x / 2, -sink * BLOCK_HEIGHT, 0)
+	var br := Vector3(size.x / 2, -sink * BLOCK_HEIGHT, 0)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for v in [[bl, Vector2(u0, 1)], [bl + up, Vector2(u0, 0)], [br + up, Vector2(u1, 0)],
@@ -1294,14 +1408,17 @@ static func _bridge_faces() -> Array:
 	return faces
 
 
-## Full cell cut corner to corner, keeping the (-x, -z) half.
-static func _wedge_faces(h: float) -> Array:
+## Full cell cut corner to corner, keeping the (-x, -z) half, from base up
+## to base + h.
+static func _wedge_faces(h: float, base := 0.0) -> Array:
+	var b := base
+	var t := base + h
 	return [
-		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(-0.5, 0, 0.5)], Vector3.DOWN],
-		[[Vector3(-0.5, h, -0.5), Vector3(0.5, h, -0.5), Vector3(-0.5, h, 0.5)], Vector3.UP],
-		[[Vector3(-0.5, 0, -0.5), Vector3(-0.5, 0, 0.5), Vector3(-0.5, h, 0.5), Vector3(-0.5, h, -0.5)], Vector3.LEFT],
-		[[Vector3(-0.5, 0, -0.5), Vector3(0.5, 0, -0.5), Vector3(0.5, h, -0.5), Vector3(-0.5, h, -0.5)], Vector3.FORWARD],
-		[[Vector3(0.5, 0, -0.5), Vector3(-0.5, 0, 0.5), Vector3(-0.5, h, 0.5), Vector3(0.5, h, -0.5)], Vector3(1, 0, 1).normalized()],
+		[[Vector3(-0.5, b, -0.5), Vector3(0.5, b, -0.5), Vector3(-0.5, b, 0.5)], Vector3.DOWN],
+		[[Vector3(-0.5, t, -0.5), Vector3(0.5, t, -0.5), Vector3(-0.5, t, 0.5)], Vector3.UP],
+		[[Vector3(-0.5, b, -0.5), Vector3(-0.5, b, 0.5), Vector3(-0.5, t, 0.5), Vector3(-0.5, t, -0.5)], Vector3.LEFT],
+		[[Vector3(-0.5, b, -0.5), Vector3(0.5, b, -0.5), Vector3(0.5, t, -0.5), Vector3(-0.5, t, -0.5)], Vector3.FORWARD],
+		[[Vector3(0.5, b, -0.5), Vector3(-0.5, b, 0.5), Vector3(-0.5, t, 0.5), Vector3(0.5, t, -0.5)], Vector3(1, 0, 1).normalized()],
 	]
 
 

@@ -19,6 +19,7 @@ var _mountain_mask := FastNoiseLite.new()
 var _style := FastNoiseLite.new()
 var _forest := FastNoiseLite.new()
 var _tall_grass := FastNoiseLite.new()
+var _sheer := FastNoiseLite.new()
 
 
 func _init(seed_value: int) -> void:
@@ -29,6 +30,7 @@ func _init(seed_value: int) -> void:
 	_setup(_style, seed_value + 3, 0.035, 2)
 	_setup(_forest, seed_value + 4, 0.06, 3)
 	_setup(_tall_grass, seed_value + 5, 0.1, 2)
+	_setup(_sheer, seed_value + 6, 0.03, 2)
 
 
 ## Continuous elevation in blocks; below 0 is water.
@@ -48,6 +50,13 @@ func mountains(x: float, z: float) -> float:
 ## slopes. Mountains are always cliffy.
 func is_cliffy(x: float, z: float) -> bool:
 	return _style.get_noise_2d(x, z) > 0.12 or mountains(x, z) > 1.5
+
+
+## How many one-block cliffs may stack straight up here (1 to 3) before
+## the ground has to step back. Sheerer in the mountains.
+func cliff_tiers(x: float, z: float) -> int:
+	var sheer := _sheer.get_noise_2d(x, z) + (0.25 if mountains(x, z) > 1.5 else 0.0)
+	return 3 if sheer > 0.25 else (2 if sheer > -0.1 else 1)
 
 
 ## 0..1 chance of a tree.
