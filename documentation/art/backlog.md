@@ -25,6 +25,12 @@ Specs for each asset type are in `README.md`.
 - [ ] **Edge transitions** between path, grass and farmland (rounded
       corner tiles, chosen from neighbouring tiles). Currently every edge is
       a hard square.
+- [ ] **Cliff edge pieces**: rounded ends and corners for ledges, and a
+      lighter lip along cliff tops (HGSS ledges).
+- [ ] **Round-canopy trees** (HGSS/BW style) alongside the pines.
+- [ ] **Stairs cut into cliffs** (an earth-cut stair tile) instead of
+      stone stairs standing against the face.
+- [ ] **Distant mountain skybox** like BW's.
 - [ ] **Grass variants** (2–3 tiles) scattered to break the repetition.
 - [ ] **Snow**: snow-covered grass, cliff tops and roofs, snowy pine
       (already drafted), for winter and snowy areas from the concept art.

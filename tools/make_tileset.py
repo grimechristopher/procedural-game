@@ -18,10 +18,11 @@ GRASS_DARK = (84, 116, 58)
 GRASS_LIGHT = (150, 178, 96)
 GRASS_EDGE = (56, 82, 44)
 
-ROCK = (138, 138, 140)
-ROCK_MID = (106, 106, 112)
-ROCK_DARK = (64, 64, 72)
-ROCK_LIGHT = (172, 172, 174)
+# Cliffs are warm earth, as in HGSS and BW ledges.
+ROCK = (184, 128, 78)
+ROCK_MID = (150, 100, 60)
+ROCK_DARK = (102, 66, 42)
+ROCK_LIGHT = (214, 164, 108)
 
 SAND = (170, 138, 96)
 SAND_DARK = (138, 108, 72)
@@ -94,7 +95,7 @@ def grass(px, ox, oy):
 
 
 def rock_face(px, ox, oy, top=0):
-    """Cliff rock: rows of rounded stones, staggered, each lit from the top-left."""
+    """Earth cliff: rows of rounded clods, staggered, each lit from the top-left."""
     fill(px, ox, oy, ROCK_DARK, range(top, T))
     rows = [(6, [0, 8]), (5, [4, 12]), (5, [2, 10])]
     y = top
