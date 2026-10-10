@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 7
+COLS, ROWS = 4, 8
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -377,15 +377,62 @@ def earth_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", EARTH_RIM)
 def earth_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", EARTH_RIM)
 
 
+# --- Ground transition autotile pieces ----------------------------------------
+# Grass creeping over the edge of a path, the plaza or farmland, laid over
+# that ground in game: transparent (magenta here) where the ground shows
+# through. Same layout as the cliff pieces: the south-east quarter of the
+# tile (columns and rows 8-15), an EDGE with grass along the south side, an
+# OUTER corner with grass round the south and east, an INNER corner with
+# grass only in the south-east corner.
+
+CLEAR = (255, 0, 255)
+
+
+def _grass_piece(px, ox, oy, kind):
+    fill(px, ox, oy, CLEAR)
+    inside = {}
+    for y in range(8, T):
+        for x in range(8, T):
+            lx, ly = x - 8 + 0.5, y - 8 + 0.5
+            if kind == "edge":
+                grass_here = ly >= (5 if x % 4 in (1, 2) else 5.5)
+            elif kind == "outer":
+                grass_here = (lx * lx + ly * ly) ** 0.5 >= 5.5
+            else:
+                grass_here = ((8 - lx) ** 2 + (8 - ly) ** 2) ** 0.5 < 2.6
+            inside[(x, y)] = grass_here
+    for (x, y), grass_here in inside.items():
+        if not grass_here:
+            continue
+        # A darker rim where the grass meets the ground.
+        rim = any(not inside.get((x + dx, y + dy), True) for dx, dy in [(0, -1), (-1, 0), (1, 0), (0, 1)])
+        tuft = (x, y) in [(10, 13), (13, 14), (14, 11)]
+        put(px, ox, oy, x, y, GRASS_DARK if rim or tuft else GRASS)
+
+
+def grass_edge(px, ox, oy): _grass_piece(px, ox, oy, "edge")
+def grass_outer(px, ox, oy): _grass_piece(px, ox, oy, "outer")
+def grass_inner(px, ox, oy): _grass_piece(px, ox, oy, "inner")
+
+
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
          earth_side,
-         cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner]
+         cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner,
+         grass_edge, grass_outer, grass_inner]
 
-img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
+img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()
 for i, draw in enumerate(TILES):
     draw(pixels, (i % COLS) * T, (i // COLS) * T)
+# Magenta becomes transparent: the ground pieces' see-through parts, and
+# unused atlas slots.
+img = img.convert("RGBA")
+rgba = img.load()
+for y in range(img.height):
+    for x in range(img.width):
+        if rgba[x, y][:3] == CLEAR:
+            rgba[x, y] = (0, 0, 0, 0)
 img.save("assets/tileset.png")
 print("wrote assets/tileset.png")

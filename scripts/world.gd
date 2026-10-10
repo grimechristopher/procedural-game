@@ -108,9 +108,11 @@ enum Tex {
 	EARTH_SIDE,
 	# Cliff-top autotile pieces (see Edges).
 	CLIFF_EDGE, CLIFF_OUTER, CLIFF_INNER, EARTH_EDGE, EARTH_OUTER, EARTH_INNER,
+	# Grass creeping over the edges of paths, the plaza and farmland (see Edges).
+	GRASS_EDGE, GRASS_OUTER, GRASS_INNER,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 7
+const TEX_ROWS := 8
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")

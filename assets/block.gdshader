@@ -36,5 +36,10 @@ void fragment() {
 	// Half a texel in from the edges so nearest sampling never bleeds.
 	float inset = 0.5 / 16.0;
 	local = clamp(local, vec2(inset), vec2(1.0 - inset));
-	ALBEDO = texture(tileset, (UV + local) / tiles).rgb * shade;
+	vec4 texel = texture(tileset, (UV + local) / tiles);
+	// Overlays (Edges' grass pieces) are see-through where the tile is.
+	if (texel.a < 0.5) {
+		discard;
+	}
+	ALBEDO = texel.rgb * shade;
 }

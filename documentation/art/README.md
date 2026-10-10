@@ -120,8 +120,8 @@ overworld tutorial:
 ## Tileset (`assets/tileset.png`)
 
 - **16×16 tiles in a 4-column atlas**, read left to right, top to bottom, in
-  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×7 tiles
-  (64×112 px).
+  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×8 tiles
+  (64×128 px).
 - Every tile must **tile seamlessly**: big faces (buildings) repeat tiles
   across themselves.
 - Wall tiles hang from the top edge of the face they're on, so put features
@@ -161,6 +161,15 @@ along the edge below a wavy grass fringe, and runs on down the face.
 
 The ground at the foot of each face gets a soft shadow in game, so don't
 draw one into the face tiles.
+
+### Ground transitions
+
+`GRASS_EDGE`, `GRASS_OUTER`, `GRASS_INNER`: grass creeping over the edges of
+paths, the plaza and farmland, laid over that ground in game. Same layout
+and mirroring as the cliff pieces (south-east quarter of the tile), but
+**transparent** wherever the ground underneath should show; magenta
+(255, 0, 255) in `tools/make_tileset.py` becomes transparent, and so should
+any alpha-0 pixel in a hand-drawn version.
 
 ## Props (`assets/props.png`)
 

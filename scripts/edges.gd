@@ -9,7 +9,9 @@ extends RefCounted
 ##
 ## The band is autotiled: each quarter of a cliff-top cell picks an edge,
 ## outer corner or inner corner piece from which of its two sides and the
-## diagonal between them drop away, so plateaus get rounded corners.
+## diagonal between them drop away, so plateaus get rounded corners. Paths,
+## the plaza and farmland are autotiled the same way, with grass creeping
+## round their edges where they meet grass.
 ##
 ## It's one mesh laid over the GridMap's blocks, built once per map from
 ## the heights; the blocks underneath still define where you can walk.
@@ -31,12 +33,17 @@ const SOLID_TOPS := [T.FULL, T.FULL_DIRT, T.ROCK, T.HALF]
 const WEDGES := [T.WEDGE, T.WEDGE_DIRT, T.HALF_WEDGE, T.UPPER_HALF_WEDGE]
 ## Pieces at the foot of a face that lean on it and hide it.
 const AGAINST := [T.HILL_RAMP, T.HALF_HILL_RAMP, T.UPPER_HALF_HILL_RAMP, T.STAIRS]
+## Ground that grass grows round the edges of, in groups that count as the
+## same ground (farmland, tilled or not).
+const GROUND_GROUPS := [[T.PATH], [T.PLAZA], [T.FARMLAND, T.TILLED, T.TILLED_WET]]
+const GRASS := [T.GROUND, T.FLOWERS]
 
 
 ## A node holding the edge meshes for the world's current terrain.
 static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain) -> Node3D:
 	var segments := _find_segments(world, heights, terrain)
 	var faces := _autotile(segments, heights, world.map_size, terrain)
+	faces += _ground_autotile(world, heights)
 	var shadow := SurfaceTool.new()
 	shadow.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for s in segments:
@@ -161,8 +168,56 @@ static func _autotile(segments: Array, heights: PackedInt32Array, size: Vector2i
 						and _height(heights, size, c + Vector2i(0, q.y)) == h:
 					piece = 2
 			if piece >= 0:
-				faces.append(_quarter(c, q, e.top, piece, transpose, e.cliffy))
+				var base: int = GridWorld.Tex.CLIFF_EDGE if e.cliffy else GridWorld.Tex.EARTH_EDGE
+				faces.append(_quarter(c, q, e.top, base + piece, transpose))
 	return faces
+
+
+## Grass round the edges of paths, the plaza and farmland at ground level,
+## a quarter cell at a time, over the ground (it's see-through elsewhere).
+static func _ground_autotile(world: GridWorld, heights: PackedInt32Array) -> Array:
+	var faces := []
+	var size := world.map_size
+	for z in size.y:
+		for x in size.x:
+			var c := Vector2i(x, z)
+			if heights[z * size.x + x] != 0:
+				continue
+			var group := _ground_group(world.ground_tile(c))
+			if group < 0:
+				continue
+			for q in GridWorld.DIAGONAL:
+				var side_x := _is_grass(world, heights, c + Vector2i(q.x, 0))
+				var side_z := _is_grass(world, heights, c + Vector2i(0, q.y))
+				var piece := -1
+				var transpose := false
+				if side_x and side_z:
+					piece = 1
+				elif side_z:
+					piece = 0
+				elif side_x:
+					piece = 0
+					transpose = true
+				elif _is_grass(world, heights, c + q):
+					piece = 2
+				if piece >= 0:
+					faces.append(_quarter(c, q, 0.0, GridWorld.Tex.GRASS_EDGE + piece, transpose))
+	return faces
+
+
+static func _ground_group(tile: int) -> int:
+	for i in GROUND_GROUPS.size():
+		if tile in GROUND_GROUPS[i]:
+			return i
+	return -1
+
+
+## Whether a cell is grass at ground level (not raised, not other ground).
+static func _is_grass(world: GridWorld, heights: PackedInt32Array, c: Vector2i) -> bool:
+	var size := world.map_size
+	if c.x < 0 or c.y < 0 or c.x >= size.x or c.y >= size.y or heights[c.y * size.x + c.x] != 0:
+		return false
+	return world.ground_tile(c) in GRASS
 
 
 ## Cells at the inside corner of a plateau: level with both side
@@ -183,21 +238,22 @@ static func _height(heights: PackedInt32Array, size: Vector2i, c: Vector2i) -> i
 	return heights[c.y * size.x + c.x]
 
 
-## One quarter of a cell's top, toward corner q, showing piece 0 (edge),
-## 1 (outer corner) or 2 (inner corner). Pieces are drawn for the south-east
-## quarter with the edge along the south; others mirror them, and an edge
-## along the east or west transposes.
-static func _quarter(c: Vector2i, q: Vector2i, top: float, piece: int, transpose: bool, cliffy: bool) -> Array:
+## One quarter of a cell's top, toward corner q, showing an autotile piece
+## (tile: its edge piece, or the outer or inner corner after it). Pieces
+## are drawn for the south-east quarter with the edge along the south;
+## others mirror them, and an edge along the east or west transposes.
+static func _quarter(c: Vector2i, q: Vector2i, top: float, tile: int, transpose: bool) -> Array:
 	var center := Vector2(c.x + 0.5, c.y + 0.5)
 	var y := top + BAND_LIFT
 	var pts := []
 	var uvs := []
 	for k in [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]:
-		pts.append(_at(center + Vector2(k.x * q.x, k.y * q.y) * 0.5, y))
+		# A hair past the cell's edge, so the lifted overlay doesn't leave a
+		# sliver of what's under it showing at the far edge.
+		pts.append(_at(center + Vector2(k.x * q.x, k.y * q.y) * (Vector2(0.5, 0.5) + k * 0.01), y))
 		var uv: Vector2 = Vector2(k.y, k.x) if transpose else k
 		uvs.append(Vector2(0.5, 0.5) + uv * 0.4999)
-	var base: int = GridWorld.Tex.CLIFF_EDGE if cliffy else GridWorld.Tex.EARTH_EDGE
-	return [pts, Vector3.UP, base + piece, uvs]
+	return [pts, Vector3.UP, tile, uvs]
 
 
 ## The straight band along a diagonal cliff's top edge.
