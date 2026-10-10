@@ -233,7 +233,7 @@ static func _rim(s: Dictionary) -> Array:
 
 ## A strip of shade on the ground at the foot of a face, fading outward.
 static func _shadow(st: SurfaceTool, s: Dictionary) -> void:
-	var y: float = (s.bottom + 0.004) * GridWorld.BLOCK_HEIGHT
+	var y: float = s.bottom + 0.004
 	var near0 := Vector3(s.p0.x, y, s.p0.y)
 	var near1 := Vector3(s.p1.x, y, s.p1.y)
 	var out := Vector3(s.o.x, 0, s.o.y) * SHADOW_WIDTH
@@ -246,8 +246,7 @@ static func _shadow(st: SurfaceTool, s: Dictionary) -> void:
 		st.add_vertex(v[0])
 
 
-## A point on the edge, in model units (heights in blocks; _build_mesh
-## stretches them to BLOCK_HEIGHT).
+## A point on the edge, in world units.
 static func _at(p: Vector2, y: float) -> Vector3:
 	return Vector3(p.x, y, p.y)
 
@@ -274,8 +273,7 @@ static func _lip_lengths() -> PackedFloat32Array:
 	var lengths := PackedFloat32Array([0.0])
 	for i in range(1, LIP.size()):
 		var step: Vector2 = LIP[i] - LIP[i - 1]
-		# Heights are stretched to BLOCK_HEIGHT on screen.
-		lengths.append(lengths[i - 1] + Vector2(step.x, step.y * GridWorld.BLOCK_HEIGHT).length())
+		lengths.append(lengths[i - 1] + step.length())
 	for i in lengths.size():
 		lengths[i] /= lengths[lengths.size() - 1]
 	return lengths

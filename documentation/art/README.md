@@ -29,10 +29,9 @@ General rules for everything:
   that style, never traced or edited from Nintendo sprites. See
   `documentation/concept/` for the look of the world.
 - The camera is fixed, facing north and pitched 59° down (HGSS's camera).
-  The world is stretched so **every texel looks the same size on screen**:
-  blocks are tan(59°) ≈ 1.67 units tall, so a one-block cliff face shows
-  as exactly one tile, and sprites (player, props, crops) stand upright,
-  stretched by the same factor. So **draw everything straight on at 16 px
+  Blocks are cubes, one tile each way. Sprites (player, props, crops)
+  stand upright and are stretched by tan(59°) ≈ 1.67, so on screen their
+  texels are as tall as the ground's. So **draw everything straight on at 16 px
   per tile**; the player ends up just under two tiles tall.
 
 ## Aseprite setup
