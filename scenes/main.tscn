@@ -1,8 +1,10 @@
-[gd_scene load_steps=9 format=3]
+[gd_scene load_steps=11 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/world.gd" id="2_world"]
 [ext_resource type="Script" path="res://scripts/player.gd" id="3_player"]
+[ext_resource type="Script" path="res://scripts/farm.gd" id="4_farm"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="5_hud"]
 
 [sub_resource type="Environment" id="Env"]
 background_mode = 1
@@ -58,3 +60,10 @@ mesh = SubResource("NoseMesh")
 [node name="Camera" type="Camera3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 0.6018, 0.7986, 0, -0.7986, 0.6018, 0, 8, 6)
 fov = 40.0
+
+[node name="Farm" type="Node3D" parent="." node_paths=PackedStringArray("world")]
+script = ExtResource("4_farm")
+world = NodePath("../World")
+
+[node name="Hud" type="CanvasLayer" parent="."]
+script = ExtResource("5_hud")

@@ -8,7 +8,7 @@ import random
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 2
+COLS, ROWS = 4, 3
 rng = random.Random(7)
 
 GRASS = [(52, 116, 60), (62, 132, 66), (74, 148, 72), (44, 102, 54)]
@@ -99,8 +99,32 @@ def planks(px, ox, oy):
         px[ox + rng.randrange(T), oy + y + 2] = WOOD_LINE
 
 
+SOIL = [(140, 98, 62), (128, 88, 54), (152, 108, 70)]
+SOIL_FURROW = (96, 64, 40)
+WET = [(74, 50, 36), (66, 44, 32), (82, 56, 40)]
+WET_FURROW = (44, 30, 22)
+
+
+def tilled(px, ox, oy, palette=SOIL, furrow=SOIL_FURROW):
+    noise(px, ox, oy, palette, [3, 2, 2])
+    # Furrows across the plot, with a lighter lip above each.
+    for y in (3, 7, 11, 15):
+        for x in range(T):
+            px[ox + x, oy + y] = furrow
+            if y > 0 and rng.random() < 0.6:
+                px[ox + x, oy + y - 1] = palette[2]
+    # Square border so neighbouring plots read as separate.
+    for i in range(T):
+        for x, y in ((i, 0), (0, i)):
+            px[ox + x, oy + y] = furrow
+
+
+def tilled_wet(px, ox, oy):
+    tilled(px, ox, oy, WET, WET_FURROW)
+
+
 # Order matches GridWorld.Tex.
-TILES = [grass, grass_side, lambda p, x, y: dirt(p, x, y), path, flowers, stone, planks]
+TILES = [grass, grass_side, lambda p, x, y: dirt(p, x, y), path, flowers, stone, planks, tilled, tilled_wet]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 px = img.load()

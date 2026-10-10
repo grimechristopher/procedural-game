@@ -39,13 +39,26 @@ enum Tile {
 	DIAG_RAMP, HALF_DIAG_RAMP,
 	# Thin pieces along a cell's edge (or, for PILLAR, in its corner).
 	WALL, WALL_CORNER, DOORWAY, FENCE, FENCE_CORNER, PILLAR,
+	# Farming: ground you can till, its tilled and watered states, and the
+	# solid objects you trade with.
+	FARMLAND, TILLED, TILLED_WET, SHIPPING_BIN, SHOP_STALL,
+}
+
+## Gameplay tags per tile. Systems like farming ask what a cell is tagged
+## with (cell_tags / has_tag) rather than checking for particular tiles.
+const TAGS := {
+	Tile.FARMLAND: [&"tillable"],
+	Tile.TILLED: [&"tilled"],
+	Tile.TILLED_WET: [&"tilled", &"watered"],
+	Tile.SHIPPING_BIN: [&"shipping_bin"],
+	Tile.SHOP_STALL: [&"shop"],
 }
 
 ## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
 ## top to bottom.
-enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS }
+enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET }
 const TEX_COLS := 4
-const TEX_ROWS := 2
+const TEX_ROWS := 3
 
 const TILESET := preload("res://assets/tileset.png")
 
@@ -81,8 +94,8 @@ func generate(new_seed: int) -> void:
 	spawn_cell = map_size / 2
 
 	var reserved := {}
-	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
-		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
+	for x in range(spawn_cell.x - 2, spawn_cell.x + 3):
+		for z in range(spawn_cell.y - 2, spawn_cell.y + 3):
 			reserved[Vector2i(x, z)] = true
 
 	for x in map_size.x:
@@ -94,6 +107,7 @@ func generate(new_seed: int) -> void:
 
 	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
+	_place_farm(reserved, approaches)
 	var placed := 0
 	for attempt in platform_count * 10:
 		if placed >= platform_count:
@@ -110,6 +124,43 @@ func generate(new_seed: int) -> void:
 		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
 			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
 	_bury_covered_blocks()
+
+
+## Lays out a field of farmland just south of the spawn plaza, with the
+## shipping bin and seed shop on the plaza's east side.
+func _place_farm(reserved: Dictionary, approaches: Array[Vector2i]) -> void:
+	var field := Rect2i(spawn_cell + Vector2i(-3, 3), Vector2i(7, 5))
+	for x in range(field.position.x, field.end.x):
+		for z in range(field.position.y, field.end.y):
+			set_ground(Vector2i(x, z), Tile.FARMLAND)
+	var margin := field.grow(1)
+	for x in range(margin.position.x, margin.end.x):
+		for z in range(margin.position.y, margin.end.y):
+			reserved[Vector2i(x, z)] = true
+	set_slope(spawn_cell + Vector2i(2, -1), 0, Tile.SHIPPING_BIN, Vector2i.LEFT)
+	set_slope(spawn_cell + Vector2i(2, 1), 0, Tile.SHOP_STALL, Vector2i.LEFT)
+	approaches.append(Vector2i(spawn_cell.x, field.position.y - 1))
+
+
+## Sets the ground-layer tile of a cell.
+func set_ground(cell: Vector2i, tile: Tile) -> void:
+	set_cell_item(Vector3i(cell.x, GROUND_LAYER, cell.y), tile)
+
+
+func ground_tile(cell: Vector2i) -> int:
+	return get_cell_item(Vector3i(cell.x, GROUND_LAYER, cell.y))
+
+
+## Every tag on any tile in the column.
+func cell_tags(cell: Vector2i) -> Array:
+	var tags := []
+	for layer in range(GROUND_LAYER, TOP_LAYER + 1):
+		tags.append_array(TAGS.get(get_cell_item(Vector3i(cell.x, layer, cell.y)), []))
+	return tags
+
+
+func has_tag(cell: Vector2i, tag: StringName) -> bool:
+	return tag in cell_tags(cell)
 
 
 ## Swaps grass-edged blocks for dirt ones where something sits on top, so
@@ -132,8 +183,8 @@ func _bury_covered_blocks() -> void:
 func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> void:
 	for x in range(1, map_size.x - 1):
 		for z in range(1, map_size.y - 1):
-			if rng.randf() < 0.08:
-				set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.FLOWERS)
+			if rng.randf() < 0.08 and ground_tile(Vector2i(x, z)) == Tile.GROUND:
+				set_ground(Vector2i(x, z), Tile.FLOWERS)
 
 	# Breadth-first over ground-level steps, so paths go around obstacles.
 	var came_from := { spawn_cell: spawn_cell }
@@ -149,7 +200,8 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 			continue
 		var c := target
 		while c != spawn_cell:
-			set_cell_item(Vector3i(c.x, GROUND_LAYER, c.y), Tile.PATH)
+			if ground_tile(c) == Tile.GROUND or ground_tile(c) == Tile.FLOWERS:
+				set_ground(c, Tile.PATH)
 			c = came_from[c]
 
 
@@ -464,7 +516,8 @@ func _surface(cell: Vector2i, layer: int) -> Dictionary:
 		return {}
 	var pos := Vector3i(cell.x, layer, cell.y)
 	var item := get_cell_item(pos)
-	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item) or _is_thin(item):
+	if item == INVALID_CELL_ITEM or _is_wedge(item) or _is_corner_slope(item) or _is_thin(item) \
+			or item == Tile.SHIPPING_BIN or item == Tile.SHOP_STALL:
 		return {}
 	var top := _span(item, layer).y
 	for above in range(layer + 1, TOP_LAYER + 1):
@@ -698,6 +751,12 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.FENCE, "Fence", _fence_faces(), wood],
 		[Tile.FENCE_CORNER, "FenceCorner", _fence_faces() + _fence_faces(true), wood],
 		[Tile.PILLAR, "Pillar", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(-0.3, 1, -0.3)), stone],
+		[Tile.FARMLAND, "Farmland", full_box, { top = Tex.DIRT, side = Tex.DIRT, slope = Tex.DIRT }],
+		[Tile.TILLED, "Tilled", full_box, { top = Tex.TILLED, side = Tex.DIRT, slope = Tex.TILLED }],
+		[Tile.TILLED_WET, "TilledWet", full_box, { top = Tex.TILLED_WET, side = Tex.DIRT, slope = Tex.TILLED_WET }],
+		[Tile.SHIPPING_BIN, "ShippingBin", _box_faces(Vector3(-0.4, 0, -0.32), Vector3(0.4, 0.6, 0.32))
+			+ _box_faces(Vector3(-0.45, 0.6, -0.38), Vector3(0.45, 0.7, 0.38)), wood],
+		[Tile.SHOP_STALL, "ShopStall", _shop_faces(), stone],
 	]
 	for item in items:
 		lib.create_item(item[0])
@@ -817,6 +876,15 @@ static func _edge_box(x0: float, x1: float, y0: float, y1: float, depth: float, 
 	if on_x:
 		return _box_faces(Vector3(-0.5, y0, x0), Vector3(-0.5 + depth, y1, x1))
 	return _box_faces(Vector3(x0, y0, -0.5), Vector3(x1, y1, -0.5 + depth))
+
+
+## Stone counter with two posts and a plank awning.
+static func _shop_faces() -> Array:
+	var faces := _box_faces(Vector3(-0.45, 0, -0.3), Vector3(0.45, 0.6, 0.3))
+	for x in [-0.45, 0.37]:
+		faces.append_array(_box_faces(Vector3(x, 0.6, 0.22), Vector3(x + 0.08, 0.92, 0.3)))
+	faces.append_array(_box_faces(Vector3(-0.5, 0.92, -0.1), Vector3(0.5, 1.0, 0.45)))
+	return faces
 
 
 ## Plank deck at the top of the cell with railings along both sides (+-X).

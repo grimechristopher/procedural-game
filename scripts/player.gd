@@ -24,6 +24,8 @@ var cell := Vector2i.ZERO
 ## Layer of the tile we're standing on.
 var layer := GridWorld.GROUND_LAYER
 var facing := Vector2i(0, 1)
+## Off while a menu is open: finishes the current step, takes no new input.
+var input_enabled := true
 
 var _moving := false
 var _from := Vector3.ZERO
@@ -58,13 +60,13 @@ func _process(delta: float) -> void:
 		var leftover := (_t - 1.0) * _step_time
 		position = _to
 		_moving = false
-		var dir := _read_input()
+		var dir := _read_input() if input_enabled else Vector2i.ZERO
 		if dir != Vector2i.ZERO and _try_step(dir):
 			_t = leftover / _step_time
 			_update_position()
 		return
 
-	var dir := _read_input()
+	var dir := _read_input() if input_enabled else Vector2i.ZERO
 	if dir == Vector2i.ZERO:
 		_hold = 0.0
 		return
@@ -74,6 +76,15 @@ func _process(delta: float) -> void:
 	_hold += delta
 	if _hold >= _hold_needed:
 		_try_step(dir)
+
+
+func is_moving() -> bool:
+	return _moving
+
+
+## The cell in front of us, which tools and interactions act on.
+func target_cell() -> Vector2i:
+	return cell + facing
 
 
 func _try_step(dir: Vector2i) -> bool:
