@@ -110,6 +110,8 @@ enum Tex {
 	CLIFF_EDGE, CLIFF_OUTER, CLIFF_INNER, EARTH_EDGE, EARTH_OUTER, EARTH_INNER,
 	# Grass creeping over the edges of paths, the plaza and farmland (see TerrainMesh).
 	GRASS_EDGE, GRASS_OUTER, GRASS_INNER,
+	# Bare rock seen from above, topping high ground.
+	ROCK_TOP,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 8
@@ -1229,7 +1231,7 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.PATH, "Path", full_box, { top = Tex.PATH, side = Tex.DIRT, slope = Tex.PATH }],
 		[Tile.FLOWERS, "Flowers", full_box, { top = Tex.FLOWERS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }],
 		[Tile.FULL, "Full", full_box, grass_block],
-		[Tile.ROCK, "Rock", full_box, { top = Tex.DIRT, side = Tex.DIRT, slope = Tex.DIRT }],
+		[Tile.ROCK, "Rock", full_box, { top = Tex.ROCK_TOP, side = Tex.DIRT, slope = Tex.DIRT }],
 		[Tile.FULL_DIRT, "FullDirt", full_box, { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
 		[Tile.WEDGE_DIRT, "WedgeDirt", _wedge_faces(1.0), { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
 		[Tile.HALF, "Half", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.5, 0.5)), grass_block],

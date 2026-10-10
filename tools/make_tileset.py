@@ -419,12 +419,26 @@ def grass_outer(px, ox, oy): _grass_piece(px, ox, oy, "outer")
 def grass_inner(px, ox, oy): _grass_piece(px, ox, oy, "inner")
 
 
+def rock_top(px, ox, oy):
+    """Bare rock seen from above, for high ground: flat stone with a few
+    lit bumps and cracks, so it doesn't read as a cliff face."""
+    fill(px, ox, oy, ROCK)
+    for x, y in [(2, 3), (9, 1), (12, 8), (4, 11), (10, 13), (6, 6)]:
+        put(px, ox, oy, x, y, ROCK_LIGHT)
+        put(px, ox, oy, x + 1, y, ROCK_LIGHT)
+        put(px, ox, oy, x, y + 1, ROCK_MID)
+        put(px, ox, oy, x + 1, y + 1, ROCK_MID)
+    for x, y in [(14, 2), (1, 7), (7, 10), (13, 14)]:
+        put(px, ox, oy, x, y, ROCK_DARK)
+        put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
+
+
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
          earth_side,
          cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner,
-         grass_edge, grass_outer, grass_inner]
+         grass_edge, grass_outer, grass_inner, rock_top]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()

@@ -160,6 +160,11 @@ along the edge below a wavy grass fringe, and runs on down the face.
   outermost ring.
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
+- `ROCK_TOP`: bare rock seen from above, topping high ground.
+
+Ramps up the cliffs are drawn the same way: a grassy slope with the edge
+piece's band running down each exposed side and the face cut to the slope
+below it.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff
   shows only its top 8 rows, so those make a complete face on their own;
   the bottom rows continue it for taller faces.

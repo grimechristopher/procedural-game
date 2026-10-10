@@ -16,6 +16,9 @@ extends RefCounted
 ##   on half cliffs, round the curve of outer corners, with a soft shadow on
 ##   the ground at their foot (not behind cliffs facing away from the
 ##   camera, where it'd be hidden anyway).
+## - Ramps are grassy slopes with the cliff's band running down their
+##   sides and the cliff's face cut to their slope below it, so they read as
+##   part of the cliff they climb.
 ## - Ground-level paths, the plaza and farmland get grass creeping round
 ##   their edges the same way, laid over the GridMap's ground.
 
@@ -23,6 +26,7 @@ extends RefCounted
 const HIDDEN := [
 	GridWorld.Tile.FULL, GridWorld.Tile.FULL_DIRT, GridWorld.Tile.ROCK, GridWorld.Tile.HALF,
 	GridWorld.Tile.WEDGE, GridWorld.Tile.WEDGE_DIRT, GridWorld.Tile.HALF_WEDGE, GridWorld.Tile.UPPER_HALF_WEDGE,
+	GridWorld.Tile.HILL_RAMP, GridWorld.Tile.HALF_HILL_RAMP, GridWorld.Tile.UPPER_HALF_HILL_RAMP,
 ]
 
 ## How far the band reaches in from the edge, in cells (5 px), for the
@@ -86,9 +90,11 @@ var terrain: Terrain
 var size: Vector2i
 var faces := []
 var shadow := SurfaceTool.new()
-## Per cell: Kind, and the top of the solid (hidden) stack in blocks.
+## Per cell: Kind, the top of the solid (hidden) stack in blocks, and for
+## ramps the layer they're in.
 var kind := PackedInt32Array()
 var solid := PackedFloat32Array()
+var ramp_layer := PackedInt32Array()
 ## Cell -> exposed sides -> [bottom, water].
 var exposed := {}
 
@@ -111,6 +117,7 @@ func run() -> void:
 				Kind.WEDGE:
 					_wedge(c)
 				Kind.RAMP:
+					_ramp(c)
 					_sides(c, false)
 			if kind[z * size.x + x] == Kind.GROUND:
 				_ground_overlay(c)
@@ -120,6 +127,7 @@ func run() -> void:
 func _classify() -> void:
 	kind.resize(size.x * size.y)
 	solid.resize(size.x * size.y)
+	ramp_layer.resize(size.x * size.y)
 	for z in size.y:
 		for x in size.x:
 			var i := z * size.x + x
@@ -127,23 +135,24 @@ func _classify() -> void:
 			if h < 0:
 				kind[i] = Kind.NONE
 				continue
-			if h == 0:
+			var top_layer := (h - 1) / 2
+			var top := world.get_cell_item(Vector3i(x, top_layer, z)) if h > 0 else -1
+			var above := world.get_cell_item(Vector3i(x, h / 2, z))
+			if above in RAMPS and (h == 0 or top in SOLID_TOPS):
+				kind[i] = Kind.RAMP
+				solid[i] = h / 2.0
+				ramp_layer[i] = h / 2
+			elif h == 0:
 				kind[i] = Kind.GROUND
 				solid[i] = 0.0
-				continue
-			var top_layer := (h - 1) / 2
-			var top := world.get_cell_item(Vector3i(x, top_layer, z))
-			var above := world.get_cell_item(Vector3i(x, h / 2, z))
-			if top in WEDGES:
+			elif top in WEDGES:
 				kind[i] = Kind.WEDGE
 				solid[i] = h / 2.0
 			elif top in RAMPS:
-				# A ramp up from half height, on the blocks below it.
+				# A ramp up from half height, on a solid lower half.
 				kind[i] = Kind.RAMP
-				solid[i] = top_layer
-			elif top in SOLID_TOPS and above in RAMPS:
-				kind[i] = Kind.RAMP
-				solid[i] = h / 2.0
+				solid[i] = top_layer + 0.5
+				ramp_layer[i] = top_layer
 			elif top in SOLID_TOPS:
 				kind[i] = Kind.BLOCK
 				solid[i] = h / 2.0
@@ -216,7 +225,7 @@ func _cell(c: Vector2i) -> void:
 	var raised := kind[i] == Kind.BLOCK
 	var top := solid[i]
 	var base: int = GridWorld.Tex.CLIFF_EDGE if _cliffy(c) else GridWorld.Tex.EARTH_EDGE
-	var top_tex: int = GridWorld.Tex.DIRT if world.get_cell_item(Vector3i(c.x, (heights[i] - 1) / 2, c.y)) == T.ROCK \
+	var top_tex: int = GridWorld.Tex.ROCK_TOP if world.get_cell_item(Vector3i(c.x, (heights[i] - 1) / 2, c.y)) == T.ROCK \
 		else GridWorld.Tex.GRASS
 	for q in GridWorld.DIAGONAL:
 		var p: Array = _piece(c, q)
@@ -322,6 +331,72 @@ func _wedge(c: Vector2i) -> void:
 	_face(p0, p1, o, top, bottom, tex)
 	if o.y > -0.3:
 		_shadow(p0, p1, o, bottom)
+
+# --- Ramps -------------------------------------------------------------------
+
+## A ramp: the grassy slope, and on each side where the ground beside it is
+## lower, the cliff's face cut to the slope and its band running down the
+## slope's edge.
+func _ramp(c: Vector2i) -> void:
+	var i := c.y * size.x + c.x
+	var layer := ramp_layer[i]
+	var tile := world.get_cell_item(Vector3i(c.x, layer, c.y))
+	var base: float = layer + GridWorld._base(tile)
+	var rise: float = GridWorld._rise(tile)
+	var up := Vector2(world._up_dir(c, layer))
+	var center := Vector2(c.x + 0.5, c.y + 0.5)
+	var across := Vector2(-up.y, up.x)
+	# Corners: low left, low right, high right, high left.
+	var corners := [center - up * 0.5 - across * 0.5, center - up * 0.5 + across * 0.5,
+		center + up * 0.5 + across * 0.5, center + up * 0.5 - across * 0.5]
+	var y := [base, base, base + rise, base + rise]
+	var pts := []
+	for k in 4:
+		pts.append(_at(corners[k], y[k]))
+	var n: Vector3 = (pts[1] - pts[0]).cross(pts[3] - pts[0]).normalized()
+	faces.append([pts, n if n.y > 0.0 else -n, GridWorld.Tex.GRASS, _planar(pts)])
+	var cliffy := _cliffy(c)
+	var face_tex: int = GridWorld.Tex.DIRT if cliffy else GridWorld.Tex.EARTH_SIDE
+	var band_tex: int = GridWorld.Tex.CLIFF_EDGE if cliffy else GridWorld.Tex.EARTH_EDGE
+	for side in [-1, 1]:
+		var o: Vector2 = across * side
+		var nh := _height(c + Vector2i(o))
+		if nh == -99:
+			continue
+		var floor_h := maxf(nh / 2.0, WATER_SURFACE if nh < 0 else 0.0)
+		if floor_h >= base + rise:
+			continue
+		# The side edge, low end to high end.
+		var a: Vector2 = corners[0] if side == -1 else corners[1]
+		var b: Vector2 = corners[3] if side == -1 else corners[2]
+		_slanted_face(a, b, o, base, base + rise, floor_h, face_tex)
+		# The band, on the slope along that edge.
+		var inner: Vector2 = -o * BAND
+		var lift := Vector3(0, LIFT, 0)
+		var u1 := a.distance_to(b)
+		faces.append([[_at(a + inner, base) + lift, _at(b + inner, base + rise) + lift,
+			_at(b, base + rise) + lift, _at(a, base) + lift], n if n.y > 0.0 else -n, band_tex,
+			[Vector2(0, 1.0 - BAND), Vector2(u1, 1.0 - BAND), Vector2(u1, 0.999), Vector2(0, 0.999)]])
+		if o.y > -0.3 and nh >= 0:
+			_shadow(a, b, o, floor_h)
+
+
+## A face below an edge that slopes from top_a at a to top_b at b, down to
+## floor_h (cut off where the edge dips below the floor).
+func _slanted_face(a: Vector2, b: Vector2, o: Vector2, top_a: float, top_b: float, floor_h: float, tex: int) -> void:
+	var out := o * FACE_OFFSET
+	var t0 := clampf((floor_h - top_a) / (top_b - top_a), 0.0, 1.0) if top_b != top_a else 0.0
+	var start := a.lerp(b, t0)
+	var start_top := lerpf(top_a, top_b, t0)
+	var u0 := 0.0
+	var u1 := a.distance_to(b)
+	var pts := [_at(start + out, start_top), _at(b + out, top_b), _at(b + out, floor_h)]
+	var uvs := [Vector2(u1 * t0, top_b - start_top), Vector2(u1, 0), Vector2(u1, top_b - floor_h)]
+	if start_top > floor_h + 0.001:
+		pts.append(_at(start + out, floor_h))
+		uvs.append(Vector2(u1 * t0, top_b - floor_h))
+	faces.append([pts, Vector3(o.x, 0, o.y), tex, uvs])
+
 
 # --- Ground-level transitions ------------------------------------------------
 
