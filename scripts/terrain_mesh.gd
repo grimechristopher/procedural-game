@@ -58,7 +58,7 @@ const GRASS := [T.GROUND, T.FLOWERS]
 enum Kind { NONE, BLOCK, GROUND, WEDGE, RAMP }
 
 ## Autotile pieces, in the order of their tiles after the edge piece.
-enum Piece { EDGE, OUTER, INNER, CENTER }
+enum Piece { EDGE, OUTER, INNER, CENTER, JOINT }
 
 
 ## A node holding the terrain's meshes for the world's current heights.
@@ -212,8 +212,23 @@ func _piece(c: Vector2i, q: Vector2i) -> Array:
 	var h := _height(c)
 	var dh := _height(c + q)
 	if dh != -99 and dh < h and _height(c + Vector2i(q.x, 0)) == h and _height(c + Vector2i(0, q.y)) == h:
-		return [Piece.INNER, false]
+		return [Piece.JOINT if _diagonal_meets(c, q) else Piece.INNER, false]
 	return [Piece.CENTER, false]
+
+
+## Whether a diagonal cliff beside c ends at its corner q, so the quarter
+## sits in the crook between two wedges and the band runs on through it.
+func _diagonal_meets(c: Vector2i, q: Vector2i) -> bool:
+	var corner := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(q) * 0.5
+	for n in [c + Vector2i(q.x, 0), c + Vector2i(0, q.y)]:
+		if _height(n) < 0 or kind[n.y * size.x + n.x] != Kind.WEDGE:
+			continue
+		var sn := Vector2(world._corner_dir(n, (heights[n.y * size.x + n.x] - 1) / 2))
+		var center := Vector2(n.x + 0.5, n.y + 0.5)
+		if corner.is_equal_approx(center + Vector2(sn.x, -sn.y) * 0.5) \
+				or corner.is_equal_approx(center + Vector2(-sn.x, sn.y) * 0.5):
+			return true
+	return false
 
 func _cliffy(c: Vector2i) -> bool:
 	return terrain.is_cliffy(c.x, c.y)
@@ -227,6 +242,7 @@ func _cell(c: Vector2i) -> void:
 	var raised := kind[i] == Kind.BLOCK
 	var top := solid[i]
 	var base: int = GridWorld.Tex.CLIFF_EDGE if _cliffy(c) else GridWorld.Tex.EARTH_EDGE
+	var joint: int = GridWorld.Tex.CLIFF_JOINT if _cliffy(c) else GridWorld.Tex.EARTH_JOINT
 	var top_tex: int = GridWorld.Tex.ROCK_TOP if world.get_cell_item(Vector3i(c.x, (heights[i] - 1) / 2, c.y)) == T.ROCK \
 		else GridWorld.Tex.GRASS
 	for q in GridWorld.DIAGONAL:
@@ -237,6 +253,8 @@ func _cell(c: Vector2i) -> void:
 		elif piece == Piece.CENTER:
 			if raised:
 				faces.append(_quarter(c, q, top, top_tex, false, true))
+		elif piece == Piece.JOINT:
+			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), joint, false, false))
 		else:
 			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), base + piece, p[1], false))
 	_sides(c, raised)
@@ -345,19 +363,20 @@ func _wedge(c: Vector2i) -> void:
 	var solid_corner := center + s * 0.5
 	var open_corner := center - s * 0.5
 	var top_tex := GridWorld.Tex.GRASS
-	faces.append([[_at(solid_corner, top), _at(p0, top), _at(p1, top)], Vector3.UP, top_tex,
-		_planar([_at(solid_corner, top), _at(p0, top), _at(p1, top)])])
+	# The top: the diagonal piece, drawn with its solid corner top-left
+	# (north-west), mirrored to this wedge's.
+	var diag: int = GridWorld.Tex.CLIFF_DIAG if _cliffy(c) else GridWorld.Tex.EARTH_DIAG
+	var tri := [solid_corner, p0, p1]
+	var tri_uvs := []
+	for p in tri:
+		tri_uvs.append(Vector2(0.5 + (p.x - center.x) * -s.x, 0.5 + (p.y - center.y) * -s.y))
+	# Out to the face, which stands a hair past the diagonal.
+	var reach := -s.normalized() * FACE_OFFSET
+	faces.append([[_at(tri[0], top), _at(tri[1] + reach, top), _at(tri[2] + reach, top)], Vector3.UP, diag, tri_uvs])
 	if low > 0:
 		faces.append([[_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)], Vector3.UP, top_tex,
 			_planar([_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)])])
 	var o := -s.normalized()
-	var base: int = GridWorld.Tex.CLIFF_EDGE if _cliffy(c) else GridWorld.Tex.EARTH_EDGE
-	# The straight band along the diagonal edge, just above the top.
-	var inner := -o * BAND
-	var length := p0.distance_to(p1)
-	faces.append([[_at(p0 + inner, top + LIFT), _at(p1 + inner, top + LIFT), _at(p1, top + LIFT), _at(p0, top + LIFT)],
-		Vector3.UP, base,
-		[Vector2(0, 1.0 - BAND), Vector2(length, 1.0 - BAND), Vector2(length, 0.999), Vector2(0, 0.999)]])
 	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
 	_face(p0, p1, o, top, bottom, tex)
 	if o.y > -0.3:
@@ -491,7 +510,7 @@ func _face(a: Vector2, b: Vector2, o: Vector2, top: float, bottom: float, tex: i
 		return
 	var out := o * FACE_OFFSET
 	var u0 := _along(a, o)
-	var u1 := u0 + a.distance_to(b)
+	var u1 := _along(b, o)
 	faces.append([[_at(a + out, top), _at(b + out, top), _at(b + out, bottom), _at(a + out, bottom)],
 		Vector3(o.x, 0, o.y), tex,
 		[Vector2(u0, 0), Vector2(u1, 0), Vector2(u1, top - bottom), Vector2(u0, top - bottom)]])
@@ -521,13 +540,9 @@ static func _at(p: Vector2, y: float) -> Vector3:
 
 
 ## Where a texture starts along an edge from p, in world units, so
-## neighbouring edges' tiles line up.
+## neighbouring edges' tiles line up (diagonal ones too).
 static func _along(p: Vector2, o: Vector2) -> float:
-	if absf(o.y) > 0.9:
-		return p.x
-	if absf(o.x) > 0.9:
-		return p.y
-	return 0.0
+	return p.dot(Vector2(-o.y, o.x))
 
 
 ## Whole-cell tile UVs projected straight down.

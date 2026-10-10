@@ -112,9 +112,12 @@ enum Tex {
 	GRASS_EDGE, GRASS_OUTER, GRASS_INNER,
 	# Bare rock seen from above, topping high ground.
 	ROCK_TOP,
+	# Diagonal cliff-top pieces: a wedge's top, and the joint between two
+	# wedges (see TerrainMesh).
+	CLIFF_DIAG, CLIFF_JOINT, EARTH_DIAG, EARTH_JOINT,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 8
+const TEX_ROWS := 9
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")

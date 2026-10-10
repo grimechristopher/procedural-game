@@ -120,8 +120,8 @@ overworld tutorial:
 ## Tileset (`assets/tileset.png`)
 
 - **16×16 tiles in a 4-column atlas**, read left to right, top to bottom, in
-  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×8 tiles
-  (64×128 px).
+  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×9 tiles
+  (64×144 px).
 - Every tile must **tile seamlessly**: big faces (buildings) repeat tiles
   across themselves.
 - Wall tiles hang from the top edge of the face they're on, so put features
@@ -158,6 +158,15 @@ along the edge below a wavy grass fringe, and runs on down the face.
   outer piece is laid on its quarter with the corner rounded to a 4 px
   radius, so draw its band following that outline (an L with a softly
   rounded corner), the highlight on its outermost pixels.
+- `CLIFF_DIAG` / `EARTH_DIAG`: a diagonal cliff's top (a wedge), drawn
+  with the solid corner top-left and the cliff running from the
+  bottom-left corner to the top-right; mirrored in game. Measure the band
+  in rows and columns from the diagonal (row 15 at the left edge, column
+  15 at the top), as the straight edge pieces do, so they meet exactly:
+  highlight, 2 px rock or earth, 2 px fringe.
+- `CLIFF_JOINT` / `EARTH_JOINT`: the south-east quarter of the cell in the
+  crook between two diagonal cells, where the band carries on through its
+  corner (the same band, continued: the pixels with x + y > 26).
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
 - `ROCK_TOP`: bare rock seen from above, topping high ground.
