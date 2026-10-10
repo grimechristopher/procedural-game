@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 6
+COLS, ROWS = 4, 7
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -318,40 +318,70 @@ def earth_side(px, ox, oy):
         put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
 
 
-def _fringe(px, ox, oy):
-    """Grass down to a wavy dark edge at rows 11-12, over whatever is below."""
-    fill(px, ox, oy, GRASS, range(0, 11))
-    for x in range(T):
-        depth = 11 + (1 if x % 4 in (1, 2) else 0)
-        for y in range(11, depth):
-            put(px, ox, oy, x, y, GRASS)
-        put(px, ox, oy, x, depth, GRASS_EDGE)
+# --- Cliff-top autotile pieces ---------------------------------------------
+# The band along a cliff's top edge comes in three pieces, each drawn for the
+# south-east quarter of a cell (columns and rows 8-15 of its tile; the rest
+# is grass): an EDGE where the south side drops away, an OUTER corner where
+# the south and east sides both do, and an INNER corner where only the
+# south-east diagonal does. The game mirrors and flips them for the other
+# quarters. Across 8 px from the cell's centre: grass, a 2 px fringe, then
+# 3 px of rock or earth, its outermost row lit where it meets the face.
+# Edge pieces also run the band across the whole tile width, for diagonal
+# cliffs.
+
+def _band_color(depth, rim, at_edge):
+    """depth: px out from the grass. rim: the rock or earth ramp (base,
+    shade, highlight). at_edge: on the cell's outer edge, where the face
+    below begins."""
+    if depth < 1:
+        return GRASS_DARK
+    if depth < 2:
+        return GRASS_EDGE
+    if at_edge:
+        return rim[2]
+    return rim[0] if depth < 3 else rim[1]
 
 
-def cliff_top(px, ox, oy):
-    """The band along the top of a full cliff, HGSS style: the cliff's rock
-    starts on the top surface, below a wavy grass edge. Only rows 11-15
-    show; row 15 is the cliff's edge, where the face below carries on."""
-    rock_face(px, ox, oy, 8)
-    _fringe(px, ox, oy)
-    for x in range(T):
-        put(px, ox, oy, x, 15, ROCK_LIGHT)
+def _cliff_piece(px, ox, oy, kind, rim):
+    fill(px, ox, oy, GRASS)
+    for y in range(8, T):
+        for x in range(0 if kind == "edge" else 8, T):
+            lx, ly = x - 8 + 0.5, y - 8 + 0.5
+            if kind == "edge":
+                depth = ly - 3
+                # A wavy fringe.
+                if int(ly) == 3 and x % 4 in (1, 2):
+                    depth = -1
+            elif kind == "outer":
+                depth = (lx * lx + ly * ly) ** 0.5 - 3
+            else:
+                depth = 4.55 - ((8 - lx) ** 2 + (8 - ly) ** 2) ** 0.5
+            if depth >= 0:
+                at_edge = y == T - 1 or (kind != "edge" and x == T - 1)
+                put(px, ox, oy, x, y, _band_color(depth, rim, at_edge))
+    # Speckles in the rim.
+    for x, y in [(9, 14), (13, 13), (3, 14), (11, 15)]:
+        if px[ox + x, oy + y] == rim[1]:
+            put(px, ox, oy, x, y, ROCK_MID if rim[0] == ROCK else ROCK_DARK)
 
 
-def earth_top(px, ox, oy):
-    """The same band for the earth cliffs of gentle ground."""
-    fill(px, ox, oy, ROCK, range(8, T))
-    for x, y in [(2, 13), (9, 14), (13, 13), (6, 12), (11, 12)]:
-        put(px, ox, oy, x, y, ROCK_MID)
-    for x, y in [(4, 14), (12, 14), (0, 13)]:
-        put(px, ox, oy, x, y, ROCK_LIGHT)
-    _fringe(px, ox, oy)
+CLIFF_RIM = [ROCK_MID, ROCK, ROCK_LIGHT]
+EARTH_RIM = [ROCK, ROCK, ROCK_LIGHT]
+
+
+def cliff_edge(px, ox, oy): _cliff_piece(px, ox, oy, "edge", CLIFF_RIM)
+def cliff_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", CLIFF_RIM)
+def cliff_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", CLIFF_RIM)
+def earth_edge(px, ox, oy): _cliff_piece(px, ox, oy, "edge", EARTH_RIM)
+def earth_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", EARTH_RIM)
+def earth_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", EARTH_RIM)
 
 
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
-         earth_side, cliff_top, earth_top]
+         earth_side,
+         cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

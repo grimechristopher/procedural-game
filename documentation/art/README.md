@@ -120,8 +120,8 @@ overworld tutorial:
 ## Tileset (`assets/tileset.png`)
 
 - **16×16 tiles in a 4-column atlas**, read left to right, top to bottom, in
-  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×6 tiles
-  (64×96 px).
+  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×7 tiles
+  (64×112 px).
 - Every tile must **tile seamlessly**: big faces (buildings) repeat tiles
   across themselves.
 - Wall tiles hang from the top edge of the face they're on, so put features
@@ -142,9 +142,17 @@ three blocks tall. `scripts/edges.gd` dresses every cliff from these
 tiles, HGSS style: the cliff's rock starts on the top surface, in a band
 along the edge below a wavy grass fringe, and runs on down the face.
 
-- `CLIFF_TOP` / `EARTH_TOP`: the band on top of full cliffs (rock) and of
-  cliffs on gentle ground (earth). Only rows 11-15 show: the grass fringe
-  at rows 11-12, then rock or earth, with row 15 at the cliff's edge.
+- `CLIFF_EDGE`, `CLIFF_OUTER`, `CLIFF_INNER` (rock, for full cliffs) and
+  `EARTH_EDGE`, `EARTH_OUTER`, `EARTH_INNER` (earth, for gentle ground):
+  the band on a cliff's top, autotiled like a 2D tileset's cliff set. Each
+  piece is drawn in the **south-east quarter** of its tile (columns and rows
+  8-15; the rest is grass): the edge where the south side drops away, the
+  outer corner where the south and east sides do, the inner corner where
+  only the south-east diagonal does. The game mirrors and flips them for
+  the other quarters, so keep the curves symmetric across the diagonal.
+  Across the 8 px from the cell's centre: 3 px grass, a 2 px fringe, 3 px
+  of rock or earth, lit on the outermost row where the face begins. Edge
+  pieces run the band across the whole tile width (diagonal cliffs use it).
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff

@@ -105,10 +105,12 @@ const TAGS := {
 enum Tex {
 	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
 	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
-	EARTH_SIDE, CLIFF_TOP, EARTH_TOP,
+	EARTH_SIDE,
+	# Cliff-top autotile pieces (see Edges).
+	CLIFF_EDGE, CLIFF_OUTER, CLIFF_INNER, EARTH_EDGE, EARTH_OUTER, EARTH_INNER,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 6
+const TEX_ROWS := 7
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")
