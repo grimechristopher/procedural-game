@@ -48,6 +48,9 @@ enum Tile {
 	# Props: sprites leaned back to face the fixed camera. All solid except
 	# tall grass, which you walk through.
 	TREE, SNOW_TREE, BOULDER, BUSH, TALL_GRASS,
+	# Invisible solid cells under a building's footprint (the building
+	# itself is a mesh; see Buildings). The door cell is tagged.
+	BUILDING, BUILDING_DOOR,
 }
 
 ## Prop tiles, in the order of their sprites in assets/props.png.
@@ -70,13 +73,17 @@ const TAGS := {
 	Tile.WATER: [&"water"],
 	Tile.WATERFALL: [&"water"],
 	Tile.TALL_GRASS: [&"tall_grass"],
+	Tile.BUILDING_DOOR: [&"door"],
 }
 
 ## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
 ## top to bottom.
-enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL }
+enum Tex {
+	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
+	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
+}
 const TEX_COLS := 4
-const TEX_ROWS := 3
+const TEX_ROWS := 5
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")
@@ -99,11 +106,21 @@ const NO_MOVE := -999
 
 var spawn_cell := Vector2i.ZERO
 
+## Buildings in the current map: { name, rect, door } (door: the footprint
+## cell with the door, interacted with from the cell south of it).
+var buildings: Array[Dictionary] = []
+
+var _block_material: ShaderMaterial
+var _building_meshes: Node3D
+
 
 func _ready() -> void:
 	cell_size = Vector3.ONE
 	cell_center_y = false
 	mesh_library = _build_mesh_library()
+	_building_meshes = Node3D.new()
+	_building_meshes.name = "Buildings"
+	add_child(_building_meshes)
 	generate(map_seed)
 
 
@@ -111,6 +128,9 @@ func _ready() -> void:
 
 func generate(new_seed: int) -> void:
 	clear()
+	buildings.clear()
+	for mesh in _building_meshes.get_children():
+		mesh.queue_free()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = new_seed
 	spawn_cell = map_size / 2
@@ -130,6 +150,7 @@ func generate(new_seed: int) -> void:
 	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
 	_place_farm(reserved, approaches)
+	_place_town(reserved, approaches)
 	_place_river(rng, reserved)
 	var placed := 0
 	for attempt in platform_count * 10:
@@ -166,6 +187,44 @@ func _place_farm(reserved: Dictionary, approaches: Array[Vector2i]) -> void:
 	set_slope(spawn_cell + Vector2i(2, -1), 0, Tile.SHIPPING_BIN, Vector2i.LEFT)
 	set_slope(spawn_cell + Vector2i(2, 1), 0, Tile.SHOP_STALL, Vector2i.LEFT)
 	approaches.append(Vector2i(spawn_cell.x, field.position.y - 1))
+
+
+## Puts the inn north of the spawn plaza, with a house and the blacksmith
+## to either side, all facing south toward the plaza (and the camera).
+func _place_town(reserved: Dictionary, approaches: Array[Vector2i]) -> void:
+	for plan in [[Buildings.inn(), Vector2i(-3, -10)], [Buildings.house(), Vector2i(-8, -6)],
+			[Buildings.blacksmith(), Vector2i(4, -6)]]:
+		place_building(plan[0], spawn_cell + plan[1], reserved, approaches)
+
+
+## Blocks a building's footprint, tags its door, adds its mesh, and keeps
+## the ground around it clear, with four rows in front: the camera looks
+## north, so anything tall there would hide the building and its door.
+func place_building(plan: Dictionary, origin: Vector2i, reserved: Dictionary,
+		approaches: Array[Vector2i]) -> void:
+	var rect := Rect2i(origin, plan.size)
+	var door: Vector2i = origin + Vector2i(plan.door, plan.size.y - 1)
+	for x in range(rect.position.x, rect.end.x):
+		for z in range(rect.position.y, rect.end.y):
+			set_cell_item(Vector3i(x, 0, z), Tile.BUILDING_DOOR if Vector2i(x, z) == door else Tile.BUILDING)
+	var mesh := MeshInstance3D.new()
+	mesh.name = plan.name
+	mesh.mesh = _build_mesh(plan.faces, {}, block_material())
+	mesh.position = Vector3(origin.x, 0, origin.y)
+	_building_meshes.add_child(mesh)
+	buildings.append({ name = plan.name, rect = rect, door = door })
+	var keep_clear := rect.grow(1).grow_side(SIDE_BOTTOM, 4)
+	for x in range(keep_clear.position.x, keep_clear.end.x):
+		for z in range(keep_clear.position.y, keep_clear.end.y):
+			reserved[Vector2i(x, z)] = true
+	approaches.append(door + Vector2i.DOWN)
+
+
+func building_at(cell: Vector2i) -> Dictionary:
+	for b in buildings:
+		if b.rect.has_point(cell):
+			return b
+	return {}
 
 
 ## Runs a two-wide river down the map, north to south, well clear of the
@@ -804,7 +863,8 @@ static func _is_diag_ramp(tile: int) -> bool:
 
 
 static func _is_solid_scenery(tile: int) -> bool:
-	return tile in [Tile.WATER, Tile.WATERFALL, Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH]
+	return tile in [Tile.WATER, Tile.WATERFALL, Tile.TREE, Tile.SNOW_TREE, Tile.BOULDER, Tile.BUSH,
+		Tile.BUILDING, Tile.BUILDING_DOOR]
 
 
 static func _is_thin(tile: int) -> bool:
@@ -841,10 +901,18 @@ static func _base(tile: int) -> float:
 # All meshes have their origin at the bottom center of the cell. Sloped tiles
 # are modeled rising toward -Z; GridMap orientation rotates them.
 
+## The unlit, face-shaded tileset material shared by blocks and buildings.
+func block_material() -> ShaderMaterial:
+	if _block_material == null:
+		_block_material = ShaderMaterial.new()
+		_block_material.shader = BLOCK_SHADER
+		_block_material.set_shader_parameter("tileset", TILESET)
+		_block_material.set_shader_parameter("tiles", Vector2(TEX_COLS, TEX_ROWS))
+	return _block_material
+
+
 func _build_mesh_library() -> MeshLibrary:
-	var mat := ShaderMaterial.new()
-	mat.shader = BLOCK_SHADER
-	mat.set_shader_parameter("tileset", TILESET)
+	var mat := block_material()
 
 	# Which tileset tile each kind of face uses.
 	var grass_block := { top = Tex.GRASS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }
@@ -911,6 +979,10 @@ func _build_mesh_library() -> MeshLibrary:
 	lib.set_item_name(Tile.WATER_BRIDGE, "WaterBridge")
 	lib.set_item_mesh(Tile.WATER_BRIDGE, _build_mesh(_bridge_faces(), wood, mat, _build_mesh(water_box, wood, water_mat)))
 
+	for tile in [Tile.BUILDING, Tile.BUILDING_DOOR]:
+		lib.create_item(tile)
+		lib.set_item_name(tile, Tile.keys()[tile].capitalize())
+
 	var props_mat := StandardMaterial3D.new()
 	props_mat.albedo_texture = PROPS_TEXTURE
 	props_mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
@@ -926,6 +998,9 @@ func _build_mesh_library() -> MeshLibrary:
 
 
 ## Builds a mesh from faces, or adds them as another surface of into.
+## A face is [points, outward normal], optionally followed by a tile (else
+## the skin picks one by the face's direction) and per-point tile-space UVs
+## (else they're projected; see _face_uv).
 func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh = null) -> ArrayMesh:
 	var top_y := 0.0
 	for face in faces:
@@ -936,19 +1011,22 @@ func _build_mesh(faces: Array, skin: Dictionary, mat: Material, into: ArrayMesh 
 	for face in faces:
 		var pts: Array = face[0]
 		var n: Vector3 = face[1]
-		var tex: int = skin.top if n.y > 0.99 else (skin.slope if n.y > 0.1 else (Tex.DIRT if n.y < -0.5 else skin.side))
+		var tex: int
+		if face.size() > 2:
+			tex = face[2]
+		else:
+			tex = skin.top if n.y > 0.99 else (skin.slope if n.y > 0.1 else (Tex.DIRT if n.y < -0.5 else skin.side))
+		var uvs: Array = face[3] if face.size() > 3 else []
 		for i in range(1, pts.size() - 1):
-			var a: Vector3 = pts[0]
-			var b: Vector3 = pts[i]
-			var c: Vector3 = pts[i + 1]
+			var corners := [0, i, i + 1]
 			# Godot treats clockwise as front-facing.
-			if (b - a).cross(c - a).dot(n) > 0.0:
-				var tmp := b
-				b = c
-				c = tmp
-			for v in [a, b, c]:
+			if (pts[i] - pts[0]).cross(pts[i + 1] - pts[0]).dot(n) > 0.0:
+				corners = [0, i + 1, i]
+			for k in corners:
+				var v: Vector3 = pts[k]
 				st.set_normal(n)
-				st.set_uv(_atlas_uv(tex, _face_uv(v, n, top_y)))
+				st.set_uv(Vector2(tex % TEX_COLS, tex / TEX_COLS))
+				st.set_uv2(uvs[k] if not uvs.is_empty() else _face_uv(v, n, top_y))
 				st.add_vertex(v)
 	st.set_material(mat)
 	return st.commit(into)
@@ -982,13 +1060,6 @@ static func _face_uv(p: Vector3, n: Vector3, top_y: float) -> Vector2:
 		return Vector2(p.x + 0.5, p.z + 0.5)
 	var along := Vector3.UP.cross(n).normalized()
 	return Vector2(p.dot(along) + 0.5, top_y - p.y)
-
-
-static func _atlas_uv(tex: int, uv: Vector2) -> Vector2:
-	# Inset half a texel so nearest sampling never bleeds into a neighbor tile.
-	var inset := 0.5 / 16.0
-	uv = uv.clamp(Vector2(inset, inset), Vector2(1.0 - inset, 1.0 - inset))
-	return Vector2((tex % TEX_COLS + uv.x) / TEX_COLS, (tex / TEX_COLS + uv.y) / TEX_ROWS)
 
 
 ## Each face is [points (convex, in order), outward normal].

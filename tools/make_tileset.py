@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 3
+COLS, ROWS = 4, 5
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -42,6 +42,27 @@ SOIL_LIGHT = (200, 148, 96)
 WET = (112, 76, 52)
 WET_FURROW = (72, 46, 30)
 WET_LIGHT = (140, 98, 68)
+
+THATCH = (196, 156, 84)
+THATCH_DARK = (148, 110, 56)
+THATCH_LIGHT = (226, 192, 118)
+SHINGLE = (128, 78, 58)
+SHINGLE_DARK = (86, 50, 38)
+SHINGLE_LIGHT = (162, 104, 76)
+PLASTER = (226, 218, 196)
+PLASTER_DARK = (204, 194, 170)
+BEAM = (96, 64, 42)
+BEAM_DARK = (70, 46, 30)
+GLASS = (240, 202, 104)
+GLASS_LIGHT = (252, 232, 160)
+DOOR = (124, 84, 50)
+DOOR_DARK = (84, 56, 34)
+BRASS = (230, 190, 90)
+FIELD = (150, 146, 138)
+FIELD_LIGHT = (178, 174, 166)
+FIELD_DARK = (112, 108, 102)
+MORTAR = (86, 82, 76)
+EMBER = [(120, 30, 20), (200, 60, 24), (244, 128, 40), (252, 210, 90)]
 
 FLOWER_RED = (232, 72, 72)
 FLOWER_WHITE = (248, 248, 248)
@@ -189,8 +210,105 @@ def farmland(px, ox, oy):
         put(px, ox, oy, x, y - 1, SOIL_LIGHT)
 
 
+def thatch(px, ox, oy):
+    """Layered straw: bands with dark undersides and diagonal strands."""
+    for y in range(T):
+        band = y % 4
+        for x in range(T):
+            c = THATCH_DARK if band == 3 else (THATCH_LIGHT if band == 0 and (x + y) % 3 == 0 else THATCH)
+            if band in (1, 2) and (x + y // 4) % 4 == 0:
+                c = THATCH_DARK
+            put(px, ox, oy, x, y, c)
+
+
+def shingle(px, ox, oy):
+    """Wooden shingles in staggered rows, each with a dark lower edge."""
+    for y in range(T):
+        row, r = divmod(y, 4)
+        for x in range(T):
+            c = SHINGLE_LIGHT if r == 0 else (SHINGLE_DARK if r == 3 else SHINGLE)
+            if (x + row * 2) % 4 == 0 and r < 3:
+                c = SHINGLE_DARK
+            put(px, ox, oy, x, y, c)
+
+
+def plaster(px, ox, oy):
+    """Plaster between timber beams: a post on the left, a beam on top."""
+    fill(px, ox, oy, PLASTER)
+    for x, y in ((5, 6), (11, 10), (8, 13), (13, 4)):
+        put(px, ox, oy, x, y, PLASTER_DARK)
+    for i in range(T):
+        put(px, ox, oy, 0, i, BEAM)
+        put(px, ox, oy, 1, i, BEAM_DARK)
+        put(px, ox, oy, i, 0, BEAM)
+        put(px, ox, oy, i, 1, BEAM_DARK)
+
+
+def window(px, ox, oy):
+    """A warmly lit window: wooden frame, four panes."""
+    fill(px, ox, oy, BEAM)
+    for y in range(2, 14):
+        for x in range(2, 14):
+            c = GLASS_LIGHT if (x < 5 and y < 6) else GLASS
+            if x in (7, 8) or y in (7, 8):
+                c = BEAM_DARK
+            put(px, ox, oy, x, y, c)
+    for x in range(T):
+        put(px, ox, oy, x, 15, BEAM_DARK)
+
+
+def door_planks(px, ox, oy):
+    for y in range(T):
+        for x in range(T):
+            put(px, ox, oy, x, y, DOOR_DARK if x % 4 == 3 else DOOR)
+    for y in range(T):
+        put(px, ox, oy, 0, y, BEAM_DARK)
+        put(px, ox, oy, 15, y, BEAM_DARK)
+
+
+def door_top(px, ox, oy):
+    door_planks(px, ox, oy)
+    for x in range(T):
+        put(px, ox, oy, x, 0, BEAM_DARK)
+        put(px, ox, oy, x, 1, BEAM)
+    for x in range(2, 14):
+        put(px, ox, oy, x, 6, BEAM)  # cross brace
+
+
+def door_bottom(px, ox, oy):
+    door_planks(px, ox, oy)
+    for x in range(2, 14):
+        put(px, ox, oy, x, 9, BEAM)
+    put(px, ox, oy, 12, 2, BRASS)
+    put(px, ox, oy, 12, 3, BRASS)
+
+
+def fieldstone(px, ox, oy):
+    """Irregular rounded stones set in dark mortar."""
+    fill(px, ox, oy, MORTAR)
+    stones = [(0, 0, 6, 4), (7, 0, 15, 3), (0, 5, 4, 9), (5, 5, 11, 8), (12, 4, 15, 9),
+              (0, 10, 7, 15), (8, 9, 15, 14)]
+    for x0, y0, x1, y1 in stones:
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                c = FIELD
+                if y == y0 or x == x0:
+                    c = FIELD_LIGHT
+                if y == y1 - 1 or x == x1 - 1:
+                    c = FIELD_DARK
+                put(px, ox, oy, x, y, c)
+
+
+def embers(px, ox, oy):
+    """Glowing forge coals."""
+    for y in range(T):
+        for x in range(T):
+            put(px, ox, oy, x, y, EMBER[((x * 7 + y * 3) % 9) // 3 + (1 if (x + y) % 5 == 0 else 0)])
+
+
 # Order matches GridWorld.Tex.
-TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland]
+TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
+         thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

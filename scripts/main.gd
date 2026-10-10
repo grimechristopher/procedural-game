@@ -73,6 +73,8 @@ func _interact(cell: Vector2i) -> void:
 	if world.has_tag(cell, &"shop"):
 		hud.open_shop(farm)
 		player.input_enabled = false
+	elif world.has_tag(cell, &"door"):
+		hud.toast("%s: closed for now." % world.building_at(cell).name)
 	elif world.has_tag(cell, &"shipping_bin"):
 		farm.ship_all()
 	else:
