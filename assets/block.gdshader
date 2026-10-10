@@ -23,7 +23,10 @@ void fragment() {
 	if (n.y > 0.99) {
 		shade = 1.0;
 	} else if (n.y > 0.1) {
-		shade = 0.86 + 0.16 * n.z - 0.08 * n.x;
+		// Slopes darken with steepness, gently, so a grassy ramp stays close
+		// to the ground around it and a bank reads as a slope, not a wall.
+		float steep = 1.0 - n.y;
+		shade = clamp(1.0 - 2.2 * steep * steep + 0.05 * n.z - 0.04 * n.x, 0.65, 1.0);
 	} else if (n.y < -0.5) {
 		shade = 0.5;
 	} else {
