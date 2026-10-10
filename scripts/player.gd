@@ -5,7 +5,7 @@ extends Node3D
 ## - Tap a new direction to turn in place; hold it to start walking.
 ## - Holding a direction chains steps tile to tile without stopping.
 ## - Hold run to move at double speed.
-## - Height changes only via ramps/stairs; see GridWorld.can_move.
+## - Walk up ramps and stairs, hop down ledges; see GridWorld.find_move.
 
 @export var world: GridWorld
 @export var walk_step_time := 0.25
@@ -17,16 +17,22 @@ extends Node3D
 @export var diagonal_grace_time := 0.05
 ## Diagonal steps take this much longer, so on-screen speed stays constant.
 @export var diagonal_time_scale := 1.41421
+## Ledge hops take this much longer than a step and arc this high.
+@export var hop_time_scale := 1.5
+@export var hop_height := 0.5
 
 @onready var body: Node3D = $Body
 
 var cell := Vector2i.ZERO
+## Layer of the tile we're standing on.
+var layer := GridWorld.GROUND_LAYER
 var facing := Vector2i(0, 1)
 
 var _moving := false
 var _from := Vector3.ZERO
 var _to := Vector3.ZERO
 var _mid_y := 0.0
+var _hop := false
 var _t := 0.0
 var _step_time := 0.0
 var _hold := 0.0
@@ -37,11 +43,12 @@ func _ready() -> void:
 	teleport(world.spawn_cell)
 
 
-func teleport(target: Vector2i) -> void:
+func teleport(target: Vector2i, target_layer := GridWorld.GROUND_LAYER) -> void:
 	cell = target
+	layer = target_layer
 	_moving = false
 	_hold = 0.0
-	position = world.cell_to_world(cell)
+	position = world.cell_to_world(cell, layer)
 
 
 func _process(delta: float) -> void:
@@ -75,26 +82,35 @@ func _process(delta: float) -> void:
 
 func _try_step(dir: Vector2i) -> bool:
 	_face(dir)
-	if not world.can_move(cell, dir):
+	var move := world.find_move(cell, layer, dir)
+	if move.is_empty():
 		return false
 	_hold = 0.0
-	_from = world.cell_to_world(cell)
-	_mid_y = world.edge_height(cell, dir) if dir.x == 0 or dir.y == 0 else _from.y
+	_hop = move.hop
+	_from = world.cell_to_world(cell, layer)
+	var straight := dir.x == 0 or dir.y == 0
+	_mid_y = world.edge_height(cell, layer, dir) if straight and not _hop else _from.y
 	cell += dir
-	_to = world.cell_to_world(cell)
+	layer = move.layer
+	_to = world.cell_to_world(cell, layer)
 	_t = 0.0
 	_step_time = run_step_time if Input.is_action_pressed("run") else walk_step_time
 	if dir.x != 0 and dir.y != 0:
 		_step_time *= diagonal_time_scale
+	if _hop:
+		_step_time *= hop_time_scale
 	_moving = true
 	return true
 
 
 ## Moves in a straight line over the ground, but splits the height change
 ## at the shared edge so walking onto or off a ramp follows its surface.
+## Hops follow an arc instead.
 func _update_position() -> void:
 	position = _from.lerp(_to, _t)
-	if _t < 0.5:
+	if _hop:
+		position.y += 4.0 * hop_height * _t * (1.0 - _t)
+	elif _t < 0.5:
 		position.y = lerpf(_from.y, _mid_y, _t * 2.0)
 	else:
 		position.y = lerpf(_mid_y, _to.y, _t * 2.0 - 1.0)
