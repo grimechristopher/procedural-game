@@ -8,11 +8,9 @@ extends GridMap
 ## hold several surfaces (e.g. ground under a bridge and the bridge deck).
 ##
 ## Movement rules (see find_move):
-## - Walk between two surfaces when their shared edge is at the same height.
-##   Height changes going up only happen on ramps and stairs, which can only
-##   be entered from their low or high end.
-## - Hop down off a flat ledge onto flat ground up to max_drop below, in any
-##   of the 8 directions. Hops are one-way.
+## - Walk between two surfaces when their shared edge is at the same height,
+##   so height only changes on ramps and stairs, which can only be entered
+##   from their low or high end.
 ## - Diagonal walks need flat ground at one height, with no corner cutting.
 ## - A surface needs HEADROOM clear above it to be stood on.
 
@@ -24,11 +22,11 @@ const STAIR_STEPS := 4
 const HEADROOM := 1.0
 const BRIDGE_THICKNESS := 0.15
 const EPS := 0.001
+const NO_MOVE := -999
 
 @export var map_size := Vector2i(28, 28)
 @export var platform_count := 10
 @export var bridge_count := 3
-@export var max_drop := 1.0
 @export var map_seed := 1
 
 var spawn_cell := Vector2i.ZERO
@@ -175,40 +173,30 @@ func set_slope(cell: Vector2i, layer: int, tile: Tile, up_dir: Vector2i) -> void
 
 # --- Movement queries -------------------------------------------------------
 
-## Where a step from the surface at (cell, layer) in dir lands.
-## Returns { layer, hop } or {} if the step is blocked.
-func find_move(cell: Vector2i, layer: int, dir: Vector2i) -> Dictionary:
+## Layer of the surface a step from (cell, layer) in dir lands on,
+## or NO_MOVE if the step is blocked.
+func find_move(cell: Vector2i, layer: int, dir: Vector2i) -> int:
 	var s := _surface(cell, layer)
 	if s.is_empty():
-		return {}
+		return NO_MOVE
 	var to := cell + dir
-	var diagonal := dir.x != 0 and dir.y != 0
 
-	if not diagonal:
+	if dir.x == 0 or dir.y == 0:
 		var e := _edge(s, dir)
 		if not is_nan(e):
 			for t in _surfaces(to):
 				if is_equal_approx(_edge(t, -dir), e):
-					return { layer = t.layer, hop = false }
+					return t.layer
+		return NO_MOVE
 
 	if _rise(s.tile) > 0.0:
-		return {}
+		return NO_MOVE
 	var h := _center(s)
-
-	if diagonal:
-		var side_a := cell + Vector2i(dir.x, 0)
-		var side_b := cell + Vector2i(0, dir.y)
-		var dest := _flat_surface_at(to, h)
-		if not dest.is_empty() and not _flat_surface_at(side_a, h).is_empty() \
-				and not _flat_surface_at(side_b, h).is_empty():
-			return { layer = dest.layer, hop = false }
-		if not (_open_at(side_a, h) and _open_at(side_b, h)):
-			return {}
-
-	var land := _landing(to, h)
-	if land.is_empty():
-		return {}
-	return { layer = land.layer, hop = true }
+	var dest := _flat_surface_at(to, h)
+	if dest.is_empty() or _flat_surface_at(cell + Vector2i(dir.x, 0), h).is_empty() \
+			or _flat_surface_at(cell + Vector2i(0, dir.y), h).is_empty():
+		return NO_MOVE
+	return dest.layer
 
 
 func edge_height(cell: Vector2i, layer: int, dir: Vector2i) -> float:
@@ -260,31 +248,6 @@ func _flat_surface_at(cell: Vector2i, h: float) -> Dictionary:
 		if _rise(s.tile) == 0.0 and is_equal_approx(_center(s), h):
 			return s
 	return {}
-
-
-## Highest flat surface below h that you'd land on hopping in from height h.
-func _landing(cell: Vector2i, h: float) -> Dictionary:
-	if not _open_at(cell, h):
-		return {}
-	var best := {}
-	for s in _surfaces(cell):
-		if _span(s.tile, s.layer).y < h - EPS:
-			best = s
-	if best.is_empty() or _rise(best.tile) > 0.0 or h - _center(best) > max_drop + EPS:
-		return {}
-	return best
-
-
-## True if nothing in the column occupies the body-height space above h.
-func _open_at(cell: Vector2i, h: float) -> bool:
-	for layer in range(GROUND_LAYER, TOP_LAYER + 1):
-		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
-		if item == INVALID_CELL_ITEM:
-			continue
-		var span := _span(item, layer)
-		if span.y > h + EPS and span.x < h + HEADROOM - EPS:
-			return false
-	return true
 
 
 ## Surface height at the edge of s facing dir, or NAN if it can't be
