@@ -134,6 +134,20 @@ overworld tutorial:
 - **Adding a tile:** append its drawing to the atlas, add its name at the end
   of `GridWorld.Tex`, and raise `TEX_ROWS` if the atlas grows a row.
 
+### Ledges and cliffs
+
+Raised edges are dressed by `scripts/edges.gd` from three tiles:
+
+- `LIP`: the rounded grass lip over every edge, wrapped over its curve
+  from the top edge (row 0) to its underside (row 15). Keep the bright
+  shoulder near the top and the dark outline at the bottom.
+- `LEDGE_SIDE`: the one-tile earth face of ledges on gentle ground. Its
+  top rows sit in the lip's shadow.
+- `DIRT`: the rocky face of cliffs.
+
+The ground at the foot of each face gets a soft shadow in game, so don't
+draw one into the face tiles.
+
 ## Props (`assets/props.png`)
 
 - **32×48 cells in a single row**, in the order of `GridWorld.PROP_SPRITES`:

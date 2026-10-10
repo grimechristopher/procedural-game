@@ -21,6 +21,9 @@ extends Camera3D
 
 func _ready() -> void:
 	fov = view_angle
+	# The camera is far off, so a far-off near plane keeps depth precise
+	# enough for faces laid a hair in front of others (Edges).
+	near = 1.0
 	var angle := deg_to_rad(pitch)
 	var target := Vector3(0, look_height, 0)
 	transform = Transform3D(Basis(Vector3.RIGHT, -angle),

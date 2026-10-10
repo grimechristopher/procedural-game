@@ -307,9 +307,44 @@ def embers(px, ox, oy):
             put(px, ox, oy, x, y, EMBER[((x * 7 + y * 3) % 9) // 3 + (1 if (x + y) % 5 == 0 else 0)])
 
 
+def ledge_side(px, ox, oy):
+    """A ledge's earth face: shadowed under the grass lip, then soft earth
+    getting darker toward the foot, with a few streaks and pebbles."""
+    bands = [ROCK_DARK, ROCK_DARK, ROCK_MID, ROCK_LIGHT, ROCK_LIGHT, ROCK_LIGHT,
+             ROCK, ROCK, ROCK, ROCK, ROCK, ROCK_MID, ROCK, ROCK_MID, ROCK_MID, ROCK_DARK]
+    for y, c in enumerate(bands):
+        fill(px, ox, oy, c, [y])
+    # Short vertical streaks of shade, staggered.
+    for x, y0, length in [(1, 6, 3), (5, 8, 4), (9, 5, 3), (12, 9, 3), (14, 6, 2), (7, 11, 2)]:
+        for y in range(y0, y0 + length):
+            put(px, ox, oy, x, y, ROCK_MID)
+    # Pebbles with a lit top.
+    for x, y in [(3, 10), (11, 12), (6, 4)]:
+        put(px, ox, oy, x, y, ROCK_LIGHT)
+        put(px, ox, oy, x + 1, y, ROCK_LIGHT)
+        put(px, ox, oy, x, y + 1, ROCK_DARK)
+        put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
+
+
+def lip(px, ox, oy):
+    """The rounded grass lip over a ledge or cliff, wrapped over its curve
+    from the top edge (row 0) to its underside (row 15): grass, a bright
+    shoulder, then darkening into an outline."""
+    bands = [GRASS, GRASS, GRASS_LIGHT, GRASS_LIGHT, GRASS_LIGHT, GRASS, GRASS, GRASS,
+             GRASS, GRASS_DARK, GRASS_DARK, GRASS_DARK, GRASS_EDGE, GRASS_EDGE, ROCK_DARK, ROCK_DARK]
+    for y, c in enumerate(bands):
+        fill(px, ox, oy, c, [y])
+    # Blades hanging over the shoulder.
+    for x in range(0, T, 3):
+        put(px, ox, oy, x, 5, GRASS_LIGHT)
+        put(px, ox, oy, (x + 1) % T, 9, GRASS)
+        put(px, ox, oy, (x + 2) % T, 12, GRASS_DARK)
+
+
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
-         thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers]
+         thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
+         ledge_side, lip]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

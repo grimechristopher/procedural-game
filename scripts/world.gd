@@ -90,6 +90,7 @@ const TAGS := {
 enum Tex {
 	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
 	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
+	LEDGE_SIDE, LIP,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 5
@@ -135,6 +136,7 @@ var buildings: Array[Dictionary] = []
 
 var _block_material: ShaderMaterial
 var _building_meshes: Node3D
+var _edges: Node3D
 
 
 func _ready() -> void:
@@ -154,6 +156,8 @@ func generate(new_seed: int) -> void:
 	buildings.clear()
 	for mesh in _building_meshes.get_children():
 		mesh.queue_free()
+	if _edges:
+		_edges.queue_free()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = new_seed
 	var terrain := Terrain.new(new_seed)
@@ -180,6 +184,8 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_connect_everything(heights, reserved)
 	_bury_covered_blocks()
+	_edges = Edges.build(self, heights, terrain)
+	add_child(_edges)
 
 
 # --- Terrain ------------------------------------------------------------------
@@ -256,9 +262,10 @@ func _height_at(heights: PackedInt32Array, cell: Vector2i) -> int:
 	return heights[cell.y * map_size.x + cell.x]
 
 
-## Stacks blocks to each cell's height, then dresses each one-block step:
-## grassy ramps and corner slopes on gentle ground, or cliffs with wedged
-## corners and the odd staircase where the terrain is cliffy.
+## Stacks blocks to each cell's height, then dresses the one-block steps
+## the way HGSS does: terraces with diagonal corners and the odd ramp up
+## them. (Edges dresses them as earth ledges on gentle ground and rocky
+## cliffs where the terrain is cliffy.)
 func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 	for z in map_size.y:
 		for x in map_size.x:
@@ -276,47 +283,19 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 			var cell := Vector2i(x, z)
 			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
-			if terrain.is_cliffy(x, z):
-				_wedge_cliff_corner(cell, heights)
-			else:
-				_slope_step(cell, heights)
+			_wedge_corner(cell, heights)
 	for z in map_size.y:
 		for x in map_size.x:
-			if heights[z * map_size.x + x] >= 0 and terrain.is_cliffy(x, z):
+			if heights[z * map_size.x + x] >= 0:
 				_maybe_ramp(Vector2i(x, z), heights)
 
 
-## On gentle ground, turns a cell at the foot of a one-block step into a
-## grassy ramp (one higher side), an inner corner slope (two adjacent higher
-## sides, and the corner between them only a block up) or an outer corner
-## slope (only a diagonal higher). Ground climbing diagonally stays stepped.
-func _slope_step(cell: Vector2i, heights: PackedInt32Array) -> void:
-	var h := _height_at(heights, cell)
-	if get_cell_item(Vector3i(cell.x, h, cell.y)) != INVALID_CELL_ITEM:
-		return
-	var up: Array[Vector2i] = []
-	for d in ORTHOGONAL:
-		if _height_at(heights, cell + d) == h + 1:
-			up.append(d)
-	if up.size() == 1 and _height_at(heights, cell - up[0]) <= h:
-		set_slope(cell, h, Tile.HILL_RAMP, up[0])
-	elif up.size() == 2 and up[0] != -up[1] and _height_at(heights, cell + up[0] + up[1]) == h + 1:
-		set_corner(cell, h, Tile.CORNER_INNER, up[0] + up[1])
-	elif up.is_empty():
-		var diagonal_up: Array[Vector2i] = []
-		for d in DIAGONAL:
-			if _height_at(heights, cell + d) == h + 1:
-				diagonal_up.append(d)
-		if diagonal_up.size() == 1:
-			set_corner(cell, h, Tile.CORNER_OUTER, diagonal_up[0])
-
-
-## On cliffy ground, cuts a plateau's outside corner at 45 degrees: a cell
+## Cuts a plateau's outside corner at 45 degrees: a cell
 ## whose two neighbours on adjacent sides, and the diagonal between them,
 ## are a block lower, with level plateau on the other sides and diagonal.
 ## (Ground that keeps climbing diagonally stays stepped: wedging every step
 ## would leave cells joined only at their corners.)
-func _wedge_cliff_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
+func _wedge_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
 	var h := _height_at(heights, cell)
 	if h < 1:
 		return
