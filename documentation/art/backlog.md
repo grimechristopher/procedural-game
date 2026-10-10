@@ -28,8 +28,9 @@ Specs for each asset type are in `README.md`.
 - [ ] **Cliff edge pieces**: rounded ends and corners for ledges, and a
       lighter lip along cliff tops (HGSS ledges).
 - [ ] **Round-canopy trees** (HGSS/BW style) alongside the pines.
-- [ ] **Stairs cut into cliffs** (an earth-cut stair tile) instead of
-      stone stairs standing against the face.
+- [ ] **Earth ramp tile** for the gaps through natural cliffs (currently
+      the grassy hill ramp). Stairs are only for man-made places (town
+      platforms, shrines, ruins), never on roads where carts go.
 - [ ] **Distant mountain skybox** like BW's.
 - [ ] **Grass variants** (2–3 tiles) scattered to break the repetition.
 - [ ] **Snow**: snow-covered grass, cliff tops and roofs, snowy pine

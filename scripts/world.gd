@@ -115,9 +115,9 @@ const ISLAND_FALLOFF := 10.0
 const MAX_HEIGHT := 10
 ## Ground this high or higher is bare rock.
 const ROCK_LEVEL := 5
-## Chance a usable cliff step gets stairs up it, before the connectivity pass.
-const STAIR_CHANCE := 0.08
-## Unreachable pockets this small get levelled if stairs won't fit.
+## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
+const RAMP_CHANCE := 0.08
+## Unreachable pockets this small get levelled if a ramp won't fit.
 const SMALL_POCKET := 8
 const ORTHOGONAL: Array[Vector2i] = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]
 const DIAGONAL: Array[Vector2i] = [Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
@@ -278,7 +278,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 	for z in map_size.y:
 		for x in map_size.x:
 			if heights[z * map_size.x + x] >= 0 and terrain.is_cliffy(x, z):
-				_maybe_stairs(Vector2i(x, z), heights)
+				_maybe_ramp(Vector2i(x, z), heights)
 
 
 ## On gentle ground, turns a cell at the foot of a one-block step into a
@@ -326,18 +326,19 @@ func _wedge_cliff_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
 			return
 
 
-## Now and then puts stairs at the foot of a cliff step, where there's
-## level ground behind to walk up from.
-func _maybe_stairs(cell: Vector2i, heights: PackedInt32Array) -> void:
+## Now and then breaks a cliff step with an earthen ramp at its foot, where
+## there's level ground behind to walk up from. (Stairs are for man-made
+## places, so the wild never gets them.)
+func _maybe_ramp(cell: Vector2i, heights: PackedInt32Array) -> void:
 	for d in ORTHOGONAL:
-		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < STAIR_CHANCE and _can_hold_stairs(cell, d, heights):
-			set_slope(cell, _height_at(heights, cell), Tile.STAIRS, d)
+		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < RAMP_CHANCE and _can_hold_ramp(cell, d, heights):
+			set_slope(cell, _height_at(heights, cell), Tile.HILL_RAMP, d)
 			return
 
 
-## Whether stairs at cell rising toward dir would lead from level ground up
+## Whether a ramp at cell rising toward dir would lead from level ground up
 ## onto level ground a block higher.
-func _can_hold_stairs(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> bool:
+func _can_hold_ramp(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> bool:
 	var h := _height_at(heights, cell)
 	if h < 0 or _height_at(heights, cell + dir) != h + 1 or _height_at(heights, cell - dir) != h:
 		return false
@@ -378,9 +379,9 @@ func _place_scenery(terrain: Terrain, heights: PackedInt32Array, reserved: Dicti
 
 ## Makes sure everything on land can be walked to from spawn. Each round
 ## finds the separate pockets of ground that can't be reached and joins
-## each to the reachable area once: with stairs where it's a block higher
+## each to the reachable area once: with a ramp where it's a block higher
 ## or lower, or by clearing a tree or rock that walls it off. Small pockets
-## that can't take stairs (knobs and pits left by the noise) are levelled
+## that can't take a ramp (knobs and pits left by the noise) are levelled
 ## to the ground beside them instead. Only land cut off by water stays
 ## unreachable.
 func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> void:
@@ -523,6 +524,9 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 				var item := get_cell_item(Vector3i(n.x, layer, n.y))
 				if item == Tile.WEDGE:
 					set_cell_item(Vector3i(n.x, layer, n.y), Tile.FULL)
+				elif item == Tile.HILL_RAMP and layer == hn \
+						and _height_at(heights, n + _up_dir(n, layer)) == hn + 1:
+					continue  # Still leads up a step, so keep it.
 				elif item in [Tile.HILL_RAMP, Tile.CORNER_INNER, Tile.CORNER_OUTER]:
 					set_cell_item(Vector3i(n.x, layer, n.y), INVALID_CELL_ITEM)
 			surface[n.y * map_size.x + n.x] = _top_surface(n)
@@ -530,7 +534,7 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 
 
 ## Joins the pocket containing u to reachable ground next to it, if it
-## can: stairs up or down a one-block step, or clearing a tree or rock
+## can: a ramp up or down a one-block step, or clearing a tree or rock
 ## between u and reachable ground at the same level.
 func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
 		reserved: Dictionary) -> bool:
@@ -544,8 +548,8 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 		if reached[ri] and absi(hu - hr) == 1:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
-			if not reserved.has(low) and _can_hold_stairs(low, dir, heights):
-				set_slope(low, mini(hu, hr), Tile.STAIRS, dir)
+			if not reserved.has(low) and _can_hold_ramp(low, dir, heights):
+				set_slope(low, mini(hu, hr), Tile.HILL_RAMP, dir)
 				surface[low.y * map_size.x + low.x] = _top_surface(low)
 				return true
 		elif not reached[ri] and hr == hu and surface[ri].is_empty() and not reserved.has(r):

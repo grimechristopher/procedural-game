@@ -30,7 +30,9 @@ Nintendo's, so they're kept out of the repo; these are the takeaways:
 - **Cliffs are warm brown earth ledges**, not grey stone, with a lighter
   lip along the top and rounded ends. Ledge lines follow the land's
   contours, stepping in terraces.
-- **Stairs are cut into the cliff face** rather than built against it.
+- Stairs are cut into the cliff face rather than built against it. (In
+  this game stairs only appear in man-made places, and not on roads, where
+  carts need ramps; natural cliffs are crossed by ramps.)
 - **Trees have round, dense canopies** and pack into solid forest walls,
   with the edge trees outlining clearings and paths.
 - **Paths are autotiled:** dirt and sand patches with soft rounded edges
