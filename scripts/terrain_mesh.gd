@@ -32,8 +32,10 @@ const HIDDEN := [
 ## How far the band reaches in from the edge, in cells (5 px), for the
 ## straight band along diagonal cliffs.
 const BAND := 5.0 / 16.0
-## Segments in the curve of a rounded corner.
-const ARC_STEPS := 4
+## Outer corners are turned in a slight curve of this radius (4 px), in
+## this many segments.
+const CORNER_RADIUS := 0.25
+const ARC_STEPS := 3
 ## Overlays on the GridMap's own ground (at ground level) sit this far
 ## above it. Faces stand this far out from the cell's edge, clear of the
 ## sides of the GridMap's ground blocks.
@@ -263,37 +265,66 @@ func _sides(c: Vector2i, raised: bool) -> void:
 			if not water and o.y > -0.3:
 				_shadow(a, b, o, bottom)
 
-## A rounded outer corner: the top quarter as a quarter circle round the
-## cell's centre, and the face following its curve.
+## A rounded outer corner, Pokemon style: the quarter keeps its square
+## sides, with the corner itself turned in a slight curve (CORNER_RADIUS),
+## and the faces follow it round.
 func _round_corner(c: Vector2i, q: Vector2i, top: float, tile: int) -> void:
 	var center := Vector2(c.x + 0.5, c.y + 0.5)
 	var bottom_x: float = exposed[c][Vector2i(q.x, 0)][0]
 	var bottom_z: float = exposed[c][Vector2i(0, q.y)][0]
-	var water: bool = exposed[c][Vector2i(q.x, 0)][1] or exposed[c][Vector2i(0, q.y)][1]
-	var bottom := minf(bottom_x, bottom_z)
+	var water_x: bool = exposed[c][Vector2i(q.x, 0)][1]
+	var water_z: bool = exposed[c][Vector2i(0, q.y)][1]
 	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
+	var e := 0.5 + FACE_OFFSET
+	var r := CORNER_RADIUS
+	# The outline in the quarter's own frame (x toward q.x, y toward q.y),
+	# from the middle of the x side round to the middle of the y side.
+	var outline: Array[Vector2] = [Vector2(e, 0)]
+	for k in ARC_STEPS + 1:
+		var angle := PI / 2.0 * k / ARC_STEPS
+		outline.append(Vector2(e - r, e - r) + Vector2(cos(angle), sin(angle)) * r)
+	outline.append(Vector2(0, e))
+	# Top: a fan from the cell's centre, the piece's texels laid flat.
+	var pts := [_at(center, top)]
+	var uvs := [Vector2(0.5, 0.5)]
+	for l in outline:
+		pts.append(_at(center + Vector2(l.x * q.x, l.y * q.y), top))
+		uvs.append(Vector2(0.5, 0.5) + (l / e) * 0.4999)
+	faces.append([pts, Vector3.UP, tile, uvs])
+	# Faces: straight down each side, then slices round the curve. (Faces
+	# already stand FACE_OFFSET out, so they're drawn from the cell's edge.)
+	var x_side := center + Vector2(0.5 * q.x, 0)
+	var y_side := center + Vector2(0, 0.5 * q.y)
+	var x_end := center + Vector2(0.5 * q.x, (e - r) * q.y)
+	var y_end := center + Vector2((e - r) * q.x, 0.5 * q.y)
+	var ox := Vector2(q.x, 0)
+	var oy := Vector2(0, q.y)
+	_face(x_side, x_end, ox, top, bottom_x, tex)
+	_face(y_end, y_side, oy, top, bottom_z, tex)
+	if not water_x and ox.y > -0.3:
+		_shadow(x_side, x_end, ox, bottom_x)
+	if not water_z and oy.y > -0.3:
+		_shadow(y_end, y_side, oy, bottom_z)
+	var bottom := minf(bottom_x, bottom_z)
 	var along := 0.0
 	for k in ARC_STEPS:
-		var a0 := PI / 2.0 * k / ARC_STEPS
-		var a1 := PI / 2.0 * (k + 1) / ARC_STEPS
-		var u0 := Vector2(cos(a0), sin(a0))
-		var u1 := Vector2(cos(a1), sin(a1))
-		var d0 := Vector2(u0.x * q.x, u0.y * q.y) * (0.5 + FACE_OFFSET)
-		var d1 := Vector2(u1.x * q.x, u1.y * q.y) * (0.5 + FACE_OFFSET)
-		# Top: a wedge of the quarter circle, the piece's texels laid flat.
-		var uv0 := Vector2(0.5, 0.5) + Vector2(u0.x, u0.y) * 0.4999
-		var uv1 := Vector2(0.5, 0.5) + Vector2(u1.x, u1.y) * 0.4999
-		faces.append([[_at(center, top), _at(center + d0, top), _at(center + d1, top)],
-			Vector3.UP, tile, [Vector2(0.5, 0.5), uv0, uv1]])
-		# Face: one slice of the curve.
-		var o := ((d0 + d1) / 2.0).normalized()
+		var l0: Vector2 = outline[k + 1]
+		var l1: Vector2 = outline[k + 2]
+		var d0 := center + Vector2(l0.x * q.x, l0.y * q.y)
+		var d1 := center + Vector2(l1.x * q.x, l1.y * q.y)
+		var m := (l0 + l1) / 2.0 - Vector2(e - r, e - r)
+		var o := Vector2(m.x * q.x, m.y * q.y).normalized()
 		var length := d0.distance_to(d1)
-		faces.append([[_at(center + d0, top), _at(center + d1, top), _at(center + d1, bottom), _at(center + d0, bottom)],
+		faces.append([[_at(d0, top), _at(d1, top), _at(d1, bottom), _at(d0, bottom)],
 			Vector3(o.x, 0, o.y), tex,
 			[Vector2(along, 0), Vector2(along + length, 0), Vector2(along + length, top - bottom), Vector2(along, top - bottom)]])
 		along += length
-		if not water and o.y > -0.3:
-			_shadow(center + d0, center + d1, o, bottom, d0.normalized(), d1.normalized())
+		if not (water_x or water_z) and o.y > -0.3:
+			var n0 := l0 - Vector2(e - r, e - r)
+			var n1 := l1 - Vector2(e - r, e - r)
+			_shadow(d0, d1, o, bottom, Vector2(n0.x * q.x, n0.y * q.y).normalized(),
+				Vector2(n1.x * q.x, n1.y * q.y).normalized())
+
 
 # --- Wedges ------------------------------------------------------------------
 

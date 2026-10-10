@@ -139,7 +139,7 @@ Terrain heights come in half blocks. Gentle ground has **half cliffs**
 (half a block tall); cliffy ground has **full cliffs** (a block tall), which
 either step back a block at a time or stack straight up into walls two or
 three blocks tall. `scripts/terrain_mesh.gd` draws the raised terrain
-(outer corners rounded into quarter circles) and dresses every cliff from
+(outer corners turned in a slight curve) and dresses every cliff from
 these tiles, HGSS style: the cliff's rock starts on the top surface, in a band
 along the edge below a wavy grass fringe, and runs on down the face.
 
@@ -154,10 +154,10 @@ along the edge below a wavy grass fringe, and runs on down the face.
   Across the 8 px from the cell's centre: 3 px grass, a 2 px fringe, 3 px
   of rock or earth, lit on the outermost row where the face begins. Edge
   pieces run the band across the whole tile width (diagonal cliffs use it).
-  Outer corners are rounded in game: the outer piece is laid on a quarter
-  circle of radius 8 px round the cell's centre, so draw its band as rings
-  round the tile's centre (row/column 8), with the highlight on the
-  outermost ring.
+  Outer corners are turned in a slight curve in game, Pokemon style: the
+  outer piece is laid on its quarter with the corner rounded to a 4 px
+  radius, so draw its band following that outline (an L with a softly
+  rounded corner), the highlight on its outermost pixels.
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
 - `ROCK_TOP`: bare rock seen from above, topping high ground.

@@ -353,13 +353,18 @@ def _cliff_piece(px, ox, oy, kind, rim):
                 if int(ly) == 3 and x % 4 in (1, 2):
                     depth = -1
             elif kind == "outer":
-                depth = (lx * lx + ly * ly) ** 0.5 - 3
+                # Measured in from the outline: a square with its corner
+                # rounded to a 4 px radius, as the game lays it.
+                if lx > 4 and ly > 4:
+                    to_edge = 4 - ((lx - 4) ** 2 + (ly - 4) ** 2) ** 0.5
+                else:
+                    to_edge = 8 - max(lx, ly)
+                depth = 5 - to_edge
             else:
                 depth = 4.55 - ((8 - lx) ** 2 + (8 - ly) ** 2) ** 0.5
             if depth >= 0:
                 if kind == "outer":
-                    # Laid on a quarter circle in game: light its rim.
-                    at_edge = (lx * lx + ly * ly) ** 0.5 >= 7
+                    at_edge = depth >= 4
                 else:
                     at_edge = y == T - 1 or (kind != "edge" and x == T - 1)
                 put(px, ox, oy, x, y, _band_color(depth, rim, at_edge))
