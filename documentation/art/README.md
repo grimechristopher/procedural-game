@@ -120,8 +120,8 @@ overworld tutorial:
 ## Tileset (`assets/tileset.png`)
 
 - **16×16 tiles in a 4-column atlas**, read left to right, top to bottom, in
-  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×5 tiles
-  (64×80 px).
+  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×6 tiles
+  (64×96 px).
 - Every tile must **tile seamlessly**: big faces (buildings) repeat tiles
   across themselves.
 - Wall tiles hang from the top edge of the face they're on, so put features
@@ -138,15 +138,18 @@ overworld tutorial:
 Terrain heights come in half blocks. Gentle ground has **half cliffs**
 (half a block tall); cliffy ground has **full cliffs** (a block tall), which
 either step back a block at a time or stack straight up into walls two or
-three blocks tall. `scripts/edges.gd` dresses every cliff from three tiles:
+three blocks tall. `scripts/edges.gd` dresses every cliff from these
+tiles, HGSS style: the cliff's rock starts on the top surface, in a band
+along the edge below a wavy grass fringe, and runs on down the face.
 
-- `LIP`: the rounded grass lip over every cliff edge, wrapped over its
-  curve from the top edge (row 0) to its underside (row 15). Keep the
-  bright shoulder near the top and the dark outline at the bottom.
+- `CLIFF_TOP` / `EARTH_TOP`: the band on top of full cliffs (rock) and of
+  cliffs on gentle ground (earth). Only rows 11-15 show: the grass fringe
+  at rows 11-12, then rock or earth, with row 15 at the cliff's edge.
+- `DIRT`: the rock face of full cliffs, one tile per block, drawn as
+  horizontal strata. Its top row carries on from the band above.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff
   shows only its top 8 rows, so those make a complete face on their own;
   the bottom rows continue it for taller faces.
-- `DIRT`: the rocky face of full cliffs, one tile per block.
 
 The ground at the foot of each face gets a soft shadow in game, so don't
 draw one into the face tiles.

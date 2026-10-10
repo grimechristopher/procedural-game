@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 5
+COLS, ROWS = 4, 6
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -95,30 +95,20 @@ def grass(px, ox, oy):
 
 
 def rock_face(px, ox, oy, top=0):
-    """Earth cliff: rows of rounded clods, staggered, each lit from the top-left."""
-    fill(px, ox, oy, ROCK_DARK, range(top, T))
-    rows = [(6, [0, 8]), (5, [4, 12]), (5, [2, 10])]
-    y = top
-    for height, starts in rows:
-        if y >= T:
-            break
-        for k, x0 in enumerate(starts):
-            width = (starts[(k + 1) % len(starts)] - x0) % T
-            for dy in range(height - 1):
-                for dx in range(width - 1):
-                    if y + dy >= T:
-                        continue
-                    edge_l, edge_r = dx == 0, dx == width - 2
-                    c = ROCK
-                    if dy == 0 or (edge_l and dy < height - 2):
-                        c = ROCK_LIGHT
-                    elif dy == height - 2 or edge_r:
-                        c = ROCK_MID
-                    # Round off the stone's corners.
-                    if (dy == 0 or dy == height - 2) and (edge_l or edge_r):
-                        c = ROCK_DARK
-                    put(px, ox, oy, x0 + dx, y + dy, c)
-        y += height
+    """Cliff rock as HGSS draws it: horizontal strata, each a lit ridge
+    shading down into a dark seam, with the seams wavering a pixel up and
+    down so they don't read as brick courses."""
+    wave = [0, 0, 1, 1, 1, 0, 0, 0, -1, -1, 0, 0, 1, 0, 0, -1]
+    for x in range(T):
+        for y in range(top, T):
+            k = (y - wave[x]) % 4
+            c = [ROCK_LIGHT, ROCK, ROCK_MID, ROCK_DARK][k]
+            put(px, ox, oy, x, y, c)
+    # A few vertical cracks breaking the ridges.
+    for x, y0 in [(3, 1), (11, 6), (7, 10), (14, 13)]:
+        for y in range(y0, min(y0 + 2, T)):
+            if y >= top:
+                put(px, ox, oy, x, y, ROCK_DARK)
 
 
 def grass_side(px, ox, oy):
@@ -310,9 +300,9 @@ def embers(px, ox, oy):
 def earth_side(px, ox, oy):
     """The earth face of cliffs on gentle ground. Those are half a block
     tall, showing only the top 8 rows, so those rows make a whole face on
-    their own: shadow under the grass lip, lit earth, then darker toward
-    the foot. The bottom rows carry on for taller faces."""
-    bands = [ROCK_DARK, ROCK_MID, ROCK_LIGHT, ROCK_LIGHT, ROCK, ROCK, ROCK_MID, ROCK_DARK,
+    their own: lit earth carrying on down from the band on the cliff's top,
+    darker toward the foot. The bottom rows carry on for taller faces."""
+    bands = [ROCK, ROCK, ROCK_LIGHT, ROCK, ROCK, ROCK, ROCK_MID, ROCK_DARK,
              ROCK, ROCK_LIGHT, ROCK, ROCK, ROCK_MID, ROCK, ROCK_MID, ROCK_DARK]
     for y, c in enumerate(bands):
         fill(px, ox, oy, c, [y])
@@ -328,25 +318,40 @@ def earth_side(px, ox, oy):
         put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
 
 
-def lip(px, ox, oy):
-    """The rounded grass lip over a cliff, wrapped over its curve
-    from the top edge (row 0) to its underside (row 15): grass, a bright
-    shoulder, then darkening into an outline."""
-    bands = [GRASS, GRASS, GRASS_LIGHT, GRASS_LIGHT, GRASS_LIGHT, GRASS, GRASS, GRASS,
-             GRASS, GRASS_DARK, GRASS_DARK, GRASS_DARK, GRASS_EDGE, GRASS_EDGE, ROCK_DARK, ROCK_DARK]
-    for y, c in enumerate(bands):
-        fill(px, ox, oy, c, [y])
-    # Blades hanging over the shoulder.
-    for x in range(0, T, 3):
-        put(px, ox, oy, x, 5, GRASS_LIGHT)
-        put(px, ox, oy, (x + 1) % T, 9, GRASS)
-        put(px, ox, oy, (x + 2) % T, 12, GRASS_DARK)
+def _fringe(px, ox, oy):
+    """Grass down to a wavy dark edge at rows 11-12, over whatever is below."""
+    fill(px, ox, oy, GRASS, range(0, 11))
+    for x in range(T):
+        depth = 11 + (1 if x % 4 in (1, 2) else 0)
+        for y in range(11, depth):
+            put(px, ox, oy, x, y, GRASS)
+        put(px, ox, oy, x, depth, GRASS_EDGE)
+
+
+def cliff_top(px, ox, oy):
+    """The band along the top of a full cliff, HGSS style: the cliff's rock
+    starts on the top surface, below a wavy grass edge. Only rows 11-15
+    show; row 15 is the cliff's edge, where the face below carries on."""
+    rock_face(px, ox, oy, 8)
+    _fringe(px, ox, oy)
+    for x in range(T):
+        put(px, ox, oy, x, 15, ROCK_LIGHT)
+
+
+def earth_top(px, ox, oy):
+    """The same band for the earth cliffs of gentle ground."""
+    fill(px, ox, oy, ROCK, range(8, T))
+    for x, y in [(2, 13), (9, 14), (13, 13), (6, 12), (11, 12)]:
+        put(px, ox, oy, x, y, ROCK_MID)
+    for x, y in [(4, 14), (12, 14), (0, 13)]:
+        put(px, ox, oy, x, y, ROCK_LIGHT)
+    _fringe(px, ox, oy)
 
 
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
-         earth_side, lip]
+         earth_side, cliff_top, earth_top]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

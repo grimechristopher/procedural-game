@@ -105,10 +105,10 @@ const TAGS := {
 enum Tex {
 	GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL,
 	THATCH, SHINGLE, PLASTER, WINDOW, DOOR_TOP, DOOR_BOTTOM, FIELDSTONE, EMBERS,
-	EARTH_SIDE, LIP,
+	EARTH_SIDE, CLIFF_TOP, EARTH_TOP,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 5
+const TEX_ROWS := 6
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")
