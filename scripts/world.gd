@@ -61,6 +61,7 @@ const TEX_COLS := 4
 const TEX_ROWS := 3
 
 const TILESET := preload("res://assets/tileset.png")
+const BLOCK_SHADER := preload("res://assets/block.gdshader")
 
 const GROUND_LAYER := -1
 const TOP_LAYER := 3
@@ -706,9 +707,9 @@ static func _base(tile: int) -> float:
 # are modeled rising toward -Z; GridMap orientation rotates them.
 
 func _build_mesh_library() -> MeshLibrary:
-	var mat := StandardMaterial3D.new()
-	mat.albedo_texture = TILESET
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	var mat := ShaderMaterial.new()
+	mat.shader = BLOCK_SHADER
+	mat.set_shader_parameter("tileset", TILESET)
 
 	# Which tileset tile each kind of face uses.
 	var grass_block := { top = Tex.GRASS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }

@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=13 format=3]
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/world.gd" id="2_world"]
@@ -8,11 +8,11 @@
 
 [sub_resource type="Environment" id="Env"]
 background_mode = 1
-background_color = Color(0.53, 0.75, 0.92, 1)
+background_color = Color(0.53, 0.8, 0.97, 1)
 ambient_light_source = 2
 ambient_light_color = Color(0.75, 0.85, 1, 1)
 ambient_light_energy = 0.35
-tonemap_mode = 2
+tonemap_mode = 0
 
 [sub_resource type="StandardMaterial3D" id="BodyMat"]
 albedo_color = Color(0.85, 0.2, 0.2, 1)
@@ -24,6 +24,18 @@ height = 1.0
 
 [sub_resource type="StandardMaterial3D" id="NoseMat"]
 albedo_color = Color(0.1, 0.1, 0.1, 1)
+
+[sub_resource type="StandardMaterial3D" id="ShadowMat"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0, 0, 0, 0.3)
+
+[sub_resource type="CylinderMesh" id="ShadowMesh"]
+material = SubResource("ShadowMat")
+top_radius = 0.32
+bottom_radius = 0.32
+height = 0.01
+radial_segments = 16
 
 [sub_resource type="BoxMesh" id="NoseMesh"]
 material = SubResource("NoseMat")
@@ -38,7 +50,6 @@ environment = SubResource("Env")
 [node name="Sun" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.866, -0.354, 0.354, 0, 0.707, 0.707, -0.5, -0.612, 0.612, 0, 10, 0)
 light_color = Color(1, 0.95, 0.85, 1)
-shadow_enabled = true
 
 [node name="World" type="GridMap" parent="."]
 script = ExtResource("2_world")
@@ -56,6 +67,11 @@ mesh = SubResource("BodyMesh")
 [node name="Nose" type="MeshInstance3D" parent="Player/Body"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.7, -0.32)
 mesh = SubResource("NoseMesh")
+
+[node name="Shadow" type="MeshInstance3D" parent="Player"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.01, 0)
+cast_shadow = 0
+mesh = SubResource("ShadowMesh")
 
 [node name="Camera" type="Camera3D" parent="Player"]
 transform = Transform3D(1, 0, 0, 0, 0.6018, 0.7986, 0, -0.7986, 0.6018, 0, 8, 6)

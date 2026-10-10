@@ -263,7 +263,7 @@ func _update_sprite(cell: Vector2i) -> void:
 		sprite.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 		sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 		sprite.alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
-		sprite.shaded = true
+		sprite.shaded = false
 		add_child(sprite)
 		_sprites[cell] = sprite
 	sprite.region_rect = Crops.region(Crops.sprite_cell(plots[cell]))

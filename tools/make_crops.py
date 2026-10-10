@@ -223,5 +223,19 @@ for row, (growth, ready, item, color) in enumerate(CROPS):
 oy = len(CROPS) * T
 for col, draw in enumerate([hoe, can, dead]):
     draw(px, col * T, oy)
+# Dark outline around every sprite, kept inside its own cell, like HGSS sprites.
+OUTLINE = (40, 44, 40, 255)
+src = img.copy().load()
+for cy in range(ROWS):
+    for cx in range(COLS):
+        for y in range(T):
+            for x in range(T):
+                X, Y = cx * T + x, cy * T + y
+                if src[X, Y][3]:
+                    continue
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    if 0 <= x + dx < T and 0 <= y + dy < T and src[X + dx, Y + dy][3]:
+                        px[X, Y] = OUTLINE
+                        break
 img.save("assets/crops.png")
 print("wrote assets/crops.png")
