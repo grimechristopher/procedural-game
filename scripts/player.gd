@@ -36,7 +36,7 @@ var _hold_needed := 0.0
 
 
 func _ready() -> void:
-	teleport(world.spawn_cell, world.spawn_layer)
+	teleport(world.spawn_cell)
 
 
 func teleport(target: Vector2i, target_layer := GridWorld.GROUND_LAYER) -> void:

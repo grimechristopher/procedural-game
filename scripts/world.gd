@@ -8,9 +8,9 @@ extends GridMap
 ## hold several surfaces (e.g. ground under a bridge and the bridge deck).
 ##
 ## Movement rules (see find_move):
-## - Walk between two surfaces when their shared edge is at the same height
-##   (give or take MAX_STEP, a quarter block), so real height changes happen
-##   on ramps and stairs, which can only be entered from their low or high end.
+## - Walk between two surfaces when their shared edge is at the same height,
+##   so height only changes on ramps and stairs, which can only be entered
+##   from their low or high end.
 ## - Diagonal walks compare heights at the shared corner instead, and the
 ##   two cells beside the move must be passable at that corner (no corner
 ##   cutting). Diagonal ramps can only be walked diagonally, up or down.
@@ -30,7 +30,8 @@ enum Tile {
 	FULL_DIRT, WEDGE_DIRT,
 	# Same shapes as RAMP and HALF_RAMP, grassed over, for the sides of mounds.
 	HILL_RAMP, HALF_HILL_RAMP,
-	SLAB,
+	# Stone paving at ground level, for the plaza at spawn.
+	PLAZA,
 	# Half-height slopes: HALF_* rise from 0 to 0.5, UPPER_HALF_* from 0.5 to 1,
 	# so a pair makes a gentle two-cell climb.
 	HALF_STAIRS, UPPER_HALF_RAMP, UPPER_HALF_STAIRS,
@@ -55,8 +56,6 @@ const HEADROOM := 1.0
 const BRIDGE_THICKNESS := 0.15
 const EPS := 0.001
 const NO_MOVE := -999
-## Height difference you can step up or down without a slope.
-const MAX_STEP := 0.25
 
 @export var map_size := Vector2i(28, 28)
 @export var platform_count := 10
@@ -64,7 +63,6 @@ const MAX_STEP := 0.25
 @export var map_seed := 1
 
 var spawn_cell := Vector2i.ZERO
-var spawn_layer := 0
 
 
 func _ready() -> void:
@@ -94,11 +92,6 @@ func generate(new_seed: int) -> void:
 				set_cell_item(Vector3i(x, 0, z), Tile.FULL)
 				set_cell_item(Vector3i(x, 1, z), Tile.FULL)
 
-	# Stone plaza at spawn.
-	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
-		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
-			set_cell_item(Vector3i(x, 0, z), Tile.SLAB)
-
 	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
 	var placed := 0
@@ -113,6 +106,9 @@ func generate(new_seed: int) -> void:
 				break
 	_place_bridges(rng, towers)
 	_decorate_ground(rng, approaches)
+	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
+		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
+			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
 	_bury_covered_blocks()
 
 
@@ -139,20 +135,15 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 			if rng.randf() < 0.08:
 				set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.FLOWERS)
 
-	# Breadth-first over straight steps that stay at ground level (or start
-	# from the plaza), so paths go around obstacles.
+	# Breadth-first over ground-level steps, so paths go around obstacles.
 	var came_from := { spawn_cell: spawn_cell }
-	var frontier: Array = [[spawn_cell, spawn_layer]]
+	var frontier: Array[Vector2i] = [spawn_cell]
 	while not frontier.is_empty():
-		var state: Array = frontier.pop_front()
-		var c: Vector2i = state[0]
+		var c: Vector2i = frontier.pop_front()
 		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
-			if came_from.has(c + d):
-				continue
-			var next := find_move(c, state[1], d)
-			if next == GROUND_LAYER or (next == spawn_layer and get_cell_item(Vector3i(c.x + d.x, 0, c.y + d.y)) == Tile.SLAB):
+			if not came_from.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
 				came_from[c + d] = c
-				frontier.append([c + d, next])
+				frontier.append(c + d)
 	for target in targets:
 		if not came_from.has(target):
 			continue
@@ -412,7 +403,7 @@ func find_move(cell: Vector2i, layer: int, dir: Vector2i) -> int:
 			return NO_MOVE
 		for t in _surfaces(to):
 			var e2 := _edge(t, -dir)
-			if not is_nan(e2) and absf(e2 - e) <= MAX_STEP + EPS and not _edge_blocked(to, -dir, e2):
+			if is_equal_approx(e2, e) and not _edge_blocked(to, -dir, e2):
 				return t.layer
 		return NO_MOVE
 
@@ -427,7 +418,7 @@ func find_move(cell: Vector2i, layer: int, dir: Vector2i) -> int:
 		return NO_MOVE
 	for t in _surfaces(to):
 		var h2 := _corner_height(t, -dir, true)
-		if not is_nan(h2) and absf(h2 - h) <= MAX_STEP + EPS and not _corner_blocked(to, -dir, h2):
+		if is_equal_approx(h2, h) and not _corner_blocked(to, -dir, h2):
 			return t.layer
 	return NO_MOVE
 
@@ -497,7 +488,7 @@ func _corner_passable(cell: Vector2i, corner: Vector2i, h: float) -> bool:
 		return false
 	for s in _surfaces(cell):
 		var ch := _corner_height(s, corner, false)
-		if not is_nan(ch) and absf(ch - h) <= MAX_STEP + EPS:
+		if is_equal_approx(ch, h):
 			return true
 	for layer in range(GROUND_LAYER + 1, TOP_LAYER + 1):
 		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
@@ -639,7 +630,6 @@ static func _span(tile: int, layer: int) -> Vector2:
 				Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER, Tile.HALF_DIAG_RAMP, \
 				Tile.FENCE, Tile.FENCE_CORNER:
 			return Vector2(layer, layer + 0.5)
-		Tile.SLAB: return Vector2(layer, layer + 0.25)
 		Tile.BRIDGE: return Vector2(layer + 1.0 - BRIDGE_THICKNESS, layer + 1.0)
 	return Vector2(layer, layer + 1.0)
 
@@ -696,7 +686,7 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.HALF_CORNER_OUTER, "HalfCornerOuter", _outer_corner_faces(0.5), hill],
 		[Tile.HALF_CORNER_INNER, "HalfCornerInner", _inner_corner_faces(0.5), hill],
 		[Tile.BRIDGE, "Bridge", _bridge_faces(), wood],
-		[Tile.SLAB, "Slab", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.25, 0.5)), stone],
+		[Tile.PLAZA, "Plaza", full_box, { top = Tex.STONE, side = Tex.DIRT, slope = Tex.STONE }],
 		[Tile.HALF_STAIRS, "HalfStairs", _stairs_faces(0.5, 2), stone],
 		[Tile.UPPER_HALF_RAMP, "UpperHalfRamp", _ramp_faces(0.5, 0.5), ramp],
 		[Tile.UPPER_HALF_STAIRS, "UpperHalfStairs", _stairs_faces(0.5, 2, 0.5), stone],
