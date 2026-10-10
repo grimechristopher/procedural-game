@@ -282,7 +282,10 @@ func _sides(c: Vector2i, raised: bool) -> void:
 		var t := Vector2(-d.y, d.x)
 		var mid := center + o * 0.5
 		if raised and _is_bank(c, d):
-			_bank(mid - t * 0.5, mid + t * 0.5, o, solid[i], bottom, tex)
+			var bank_tex: int = GridWorld.Tex.BANK_ROCK if _cliffy(c) else tex
+			_bank(mid - t * 0.5, mid + t * 0.5, o, solid[i], bottom, bank_tex)
+			for end in [-1, 1]:
+				_bank_end(c, d, Vector2i(t) * end, solid[i], bottom, bank_tex)
 			continue
 		for half in [-1, 1]:
 			var q := Vector2i(d) + Vector2i(t * half)
@@ -319,12 +322,27 @@ func _bank(a: Vector2, b: Vector2, o: Vector2, top: float, bottom: float, tex: i
 	faces.append([pts, n, tex, [Vector2(u0, 0), Vector2(u1, 0), Vector2(u1, top - bottom), Vector2(u0, top - bottom)]])
 
 
+## Closes the end of c's bank on side d toward along, unless the bank
+## carries on there (into the next cell's bank, or round an outer corner):
+## a triangle under the end of the slope.
+func _bank_end(c: Vector2i, d: Vector2i, along: Vector2i, top: float, bottom: float, tex: int) -> void:
+	var next := c + along
+	if _height(next) > _height(c) or (_height(next) == _height(c) and _is_bank(next, d)):
+		return  # into a wall, or the bank carries on
+	if _is_bank(c, along):
+		return  # the corner piece wraps round
+	var e := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(d) * 0.5 + Vector2(along) * 0.5
+	var pts := [_at(e, top), _at(e + Vector2(d), bottom), _at(e, bottom)]
+	faces.append([pts, Vector3(along.x, 0, along.y), tex,
+		[Vector2(0, 0), Vector2(1, top - bottom), Vector2(0, top - bottom)]])
+
+
 ## Where two banks meet at an outer corner: the slope wrapping round the
 ## corner, across the diagonal cell, from the corner's top down to that
 ## cell's far edges.
 func _bank_corner(c: Vector2i, q: Vector2i, top: float) -> void:
 	var bottom := (_height(c) - 2) / 2.0
-	var tex: int = GridWorld.Tex.DIRT if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
+	var tex: int = GridWorld.Tex.BANK_ROCK if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
 	var p := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(q) * 0.5
 	var ends := [p + Vector2(q.x, 0), p + Vector2(q), p + Vector2(0, q.y)]
 	# Strata ring the corner: down the slope from the corner's top to the

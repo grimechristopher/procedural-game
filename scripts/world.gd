@@ -118,6 +118,8 @@ enum Tex {
 	# Diagonal cliff-top pieces: a wedge's top, and the joint between two
 	# wedges (see TerrainMesh).
 	CLIFF_DIAG, CLIFF_JOINT, EARTH_DIAG, EARTH_JOINT,
+	# The rock of an HGSS-style bank, sloping across a cell (see TerrainMesh).
+	BANK_ROCK,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 9

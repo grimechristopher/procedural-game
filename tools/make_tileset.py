@@ -463,13 +463,33 @@ def rock_top(px, ox, oy):
         put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
 
 
+def bank_rock(px, ox, oy):
+    """The rock of an HGSS-style bank, a cliff face sloping across a whole
+    cell, top edge at row 0: fine strata running along the slope, wavering,
+    lit near the top and darkening toward the foot."""
+    wave = [0, 0, 1, 1, 0, 0, -1, -1, 0, 1, 1, 0, 0, 0, -1, 0]
+    for x in range(T):
+        for y in range(T):
+            k = (y - wave[x]) % 3
+            if y < 5:
+                c = [ROCK_LIGHT, ROCK, ROCK][k]
+            elif y < 11:
+                c = [ROCK, ROCK_MID, ROCK][k]
+            else:
+                c = [ROCK_MID, ROCK_DARK, ROCK_MID][k]
+            put(px, ox, oy, x, y, c)
+    for x, y in [(3, 2), (10, 6), (6, 9), (13, 12), (1, 13)]:
+        put(px, ox, oy, x, y, ROCK_DARK)
+        put(px, ox, oy, x, y + 1, ROCK_DARK)
+
+
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
          earth_side,
          cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner,
          grass_edge, grass_outer, grass_inner, rock_top,
-         cliff_diag, cliff_joint, earth_diag, earth_joint]
+         cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()
