@@ -5,7 +5,7 @@ extends Node3D
 ## - Tap a new direction to turn in place; hold it to start walking.
 ## - Holding a direction chains steps tile to tile without stopping.
 ## - Hold run to move at double speed.
-## - Diagonals can't cut corners: both adjacent orthogonal tiles must be open.
+## - Height changes only via ramps/stairs; see GridWorld.can_move.
 
 @export var world: GridWorld
 @export var walk_step_time := 0.25
@@ -26,6 +26,7 @@ var facing := Vector2i(0, 1)
 var _moving := false
 var _from := Vector3.ZERO
 var _to := Vector3.ZERO
+var _mid_y := 0.0
 var _t := 0.0
 var _step_time := 0.0
 var _hold := 0.0
@@ -47,7 +48,7 @@ func _process(delta: float) -> void:
 	if _moving:
 		_t += delta / _step_time
 		if _t < 1.0:
-			position = _from.lerp(_to, _t)
+			_update_position()
 			return
 		# Arrived. Chain straight into the next step if input is still held,
 		# carrying over leftover time so continuous walking stays smooth.
@@ -57,7 +58,7 @@ func _process(delta: float) -> void:
 		var dir := _read_input()
 		if dir != Vector2i.ZERO and _try_step(dir):
 			_t = leftover / _step_time
-			position = _from.lerp(_to, _t)
+			_update_position()
 		return
 
 	var dir := _read_input()
@@ -74,10 +75,11 @@ func _process(delta: float) -> void:
 
 func _try_step(dir: Vector2i) -> bool:
 	_face(dir)
-	if not _can_move(dir):
+	if not world.can_move(cell, dir):
 		return false
 	_hold = 0.0
 	_from = world.cell_to_world(cell)
+	_mid_y = world.edge_height(cell, dir) if dir.x == 0 or dir.y == 0 else _from.y
 	cell += dir
 	_to = world.cell_to_world(cell)
 	_t = 0.0
@@ -88,13 +90,14 @@ func _try_step(dir: Vector2i) -> bool:
 	return true
 
 
-func _can_move(dir: Vector2i) -> bool:
-	if not world.is_walkable(cell + dir):
-		return false
-	if dir.x != 0 and dir.y != 0:
-		return world.is_walkable(cell + Vector2i(dir.x, 0)) \
-			and world.is_walkable(cell + Vector2i(0, dir.y))
-	return true
+## Moves in a straight line over the ground, but splits the height change
+## at the shared edge so walking onto or off a ramp follows its surface.
+func _update_position() -> void:
+	position = _from.lerp(_to, _t)
+	if _t < 0.5:
+		position.y = lerpf(_from.y, _mid_y, _t * 2.0)
+	else:
+		position.y = lerpf(_mid_y, _to.y, _t * 2.0 - 1.0)
 
 
 func _face(dir: Vector2i) -> void:
