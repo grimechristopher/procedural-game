@@ -18,8 +18,6 @@ extends Node3D
 ## Diagonal steps take this much longer, so on-screen speed stays constant.
 @export var diagonal_time_scale := 1.41421
 
-## Fraction of each step spent on the stepping frame before standing again.
-@export var step_frame_portion := 0.6
 
 @onready var sprite: Sprite3D = $Sprite
 
@@ -151,13 +149,14 @@ func _face(dir: Vector2i) -> void:
 	_update_frame()
 
 
-## Picks the sheet row for our facing and the walk frame: a stepping frame
-## (alternating feet) for the first part of each step, standing otherwise.
+## Picks the sheet row for our facing and the walk frame: each grid step
+## plays half the walk cycle (default, up, contact, passing), alternating
+## feet between steps.
 func _update_frame() -> void:
 	var row: Array = Appearance.FACING_ROWS[facing]
 	var column := 0
-	if _moving and _t < step_frame_portion:
-		column = 1 if _left_foot else 2
+	if _moving:
+		column = Appearance.walk_column(_t, _left_foot)
 	sprite.frame = row[0] * Appearance.COLS + column
 	sprite.flip_h = row[1]
 

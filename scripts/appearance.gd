@@ -5,15 +5,21 @@ extends RefCounted
 ## slot, and the sprite sheet built from them.
 ##
 ## Layer art comes from tools/make_character.py: every layer shares one
-## layout (32x32 frames, 3 columns stand / step A / step B, 5 rows facing
-## S, SE, E, NE, N) and marks recolourable pixels as (r, 0, 255) shades.
-## build_texture() recolours each chosen layer, stacks them in slot order,
-## and outlines the result, once per change rather than every frame.
+## layout (32x32 frames, 7 columns: default, then up / contact / passing for
+## each leg; 5 rows facing S, SE, E, NE, N) and marks recolourable pixels as
+## (r, 0, 255) shades. build_texture() recolours each chosen layer, stacks
+## them in slot order, and outlines the result, once per change rather than
+## every frame.
 
 const FRAME := 32
-const COLS := 3
+const COLS := 7
+## Walk frames per grid step (default, up, contact, passing).
+const STEP_FRAMES := 4
 const ROWS := 5
+## Outlines take a dark shade of the colour they border, DS style, but never
+## lighter than this.
 const OUTLINE := Color8(32, 28, 36)
+const OUTLINE_DARKEN := 0.62
 
 const CLOTH := [
 	Color8(200, 56, 56), Color8(224, 128, 48), Color8(232, 200, 72), Color8(80, 150, 70),
@@ -113,7 +119,15 @@ static func _stamp(out: Image, layer: Image, ramp: Array[Color]) -> void:
 			out.set_pixel(x, y, c)
 
 
-## Dark outline around everything, kept inside each frame.
+## Walk column for a point in a step: the default frame, then up, contact
+## and passing for whichever leg is stepping.
+static func walk_column(step_progress: float, left_foot: bool) -> int:
+	var stage := clampi(int(step_progress * STEP_FRAMES), 0, STEP_FRAMES - 1)
+	return 0 if stage == 0 else stage + (0 if left_foot else 3)
+
+
+## Outline around everything, kept inside each frame, coloured a dark shade
+## of the pixel it borders.
 static func _outline(img: Image) -> void:
 	var src := img.duplicate() as Image
 	for y in img.get_height():
@@ -125,6 +139,8 @@ static func _outline(img: Image) -> void:
 			for d in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
 				if fx + d.x < 0 or fx + d.x >= FRAME or fy + d.y < 0 or fy + d.y >= FRAME:
 					continue
-				if src.get_pixel(x + d.x, y + d.y).a > 0.5:
-					img.set_pixel(x, y, OUTLINE)
+				var inside := src.get_pixel(x + d.x, y + d.y)
+				if inside.a > 0.5:
+					var edge := inside.darkened(OUTLINE_DARKEN)
+					img.set_pixel(x, y, edge if edge.get_luminance() > OUTLINE.get_luminance() else OUTLINE)
 					break

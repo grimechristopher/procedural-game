@@ -3,12 +3,20 @@
 Styled after Pokemon Black & White's overworld trainers (original art, not
 copies): about 28px tall in a 32x32 frame, a head roughly a third of the
 height, slim two-pixel arms, separate legs, hair with volume above the head,
-three-tone shading lit from the top-left, and a dark outline. BW only drew
-four facings; the diagonals here extend the same style.
+three-tone shading lit from the top-left, and an outline in a dark shade of
+whatever it borders (added in-game). BW only drew four facings; the
+diagonals here extend the same style.
+
+The walk follows Bandygrass's 8-directional walk cycle tutorial: default,
+up (body lifts 1px, the moving foot passes at its highest), contact (feet
+and arms farthest apart; in front and back views the nearer foot is drawn
+lower and wider), passing (back foot lifts), then the same with the other
+leg. In diagonals, one side's arm and leg sit a pixel higher.
 
 Run from the repo root:  python3 tools/make_character.py
 Writes assets/character/<layer>.png. Every sheet has the same layout: 32x32
-frames, 3 columns (stand, step A, step B) by 5 rows of directions
+frames, 7 columns (default, then up / contact / passing for each leg) by 5
+rows of directions
 (south, south-east, east, north-east, north); the game mirrors the east-side
 rows for the west. See scripts/appearance.gd.
 
@@ -22,9 +30,10 @@ import os
 from PIL import Image
 
 F = 32
-COLS, ROWS = 3, 5
+COLS, ROWS = 7, 5
 S, SE, E, NE, N = range(5)
-STAND, STEP_A, STEP_B = range(3)
+DEFAULT = 0
+UP, CONTACT, PASSING = "up", "contact", "passing"
 WHITE = (240, 240, 236)
 EYE_WHITE = (250, 250, 250)
 
@@ -33,15 +42,34 @@ def shade(k):
     return (40 + 60 * k, 0, 255)
 
 
+def stage(frame):
+    """(moving leg 0 = image-left / 1 = image-right / None, walk stage) for a column."""
+    if frame == DEFAULT:
+        return None, None
+    return (0 if frame <= 3 else 1), (UP, CONTACT, PASSING)[(frame - 1) % 3]
+
+
 class Frame:
+    """One 32x32 cell. Everything above the legs is lifted by `lift` pixels
+    (the walk's bounce); legs and shoes are drawn with the raw_ methods."""
+
     def __init__(self, img, col, row):
         self.px = img.load()
         self.ox = col * F
         self.oy = row * F
+        self.lift = 1 if stage(col)[1] == UP else 0
 
     def dot(self, x, y, c):
+        self.raw_dot(x, y - self.lift if y < LEG_TOP else y, c)
+
+    def raw_dot(self, x, y, c):
         if 0 <= x < F and 0 <= y < F:
             self.px[self.ox + x, self.oy + y] = c + (255,) if len(c) == 3 else c
+
+    def raw_rect(self, x0, y0, x1, y1, k=2):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                self.raw_dot(x, y, shade(max(0, k - 1) if x == x1 and x1 > x0 else k))
 
     def rect(self, x0, y0, x1, y1, k=2, lit=True):
         """Filled rect (inclusive), lit from the top-left in ramp shades."""
@@ -102,33 +130,75 @@ def torso(direction):
 
 
 def legs(direction, frame):
-    """(x0, x1, bottom_y) per leg, back to front."""
+    """(x0, x1, bottom_y, far) per leg, drawn back to front. Legs start at
+    LEG_TOP - lift so they stay joined to the lifted body."""
+    moving, step = stage(frame)
     if direction == E:
-        if frame == STAND:
-            return [(14, 18, LEG_BOTTOM)]
-        front = (17, 19, LEG_BOTTOM) if frame == STEP_A else (12, 14, LEG_BOTTOM)
-        back = (12, 14, LEG_BOTTOM - 1) if frame == STEP_A else (17, 19, LEG_BOTTOM - 1)
-        return [back, front]
-    (l0, l1), (r0, r1) = GEOM[direction]["legs"]
-    lb, rb = LEG_BOTTOM, LEG_BOTTOM
-    if frame == STEP_A:
-        lb, rb = LEG_BOTTOM + 1, LEG_BOTTOM - 1
-    elif frame == STEP_B:
-        lb, rb = LEG_BOTTOM - 1, LEG_BOTTOM + 1
-    return [(l0, l1, lb), (r0, r1, rb)]
+        if step is None:
+            return [(14, 18, LEG_BOTTOM, False)]
+        far_moves = moving == 1  # A: near leg moves; B: far leg
+        if step == UP:
+            stride, plant = (16, 18, LEG_BOTTOM - 1), (13, 15, LEG_BOTTOM)
+        elif step == CONTACT:
+            stride, plant = (17, 20, LEG_BOTTOM), (11, 13, LEG_BOTTOM)
+        else:
+            stride, plant = (15, 17, LEG_BOTTOM), (12, 14, LEG_BOTTOM - 1)
+        moving_leg = stride + (far_moves,)
+        other = plant + (not far_moves,)
+        return sorted([moving_leg, other], key=lambda leg: not leg[3])  # far first
+
+    pair = [list(GEOM[direction]["legs"][0]) + [LEG_BOTTOM], list(GEOM[direction]["legs"][1]) + [LEG_BOTTOM]]
+    if step is not None:
+        other = 1 - moving
+        if step == UP:
+            pair[moving][2] -= 1
+        elif step == CONTACT:
+            # The foot nearer the camera sits lower and wider, the farther one
+            # higher and narrower. Facing away, the stepping foot is the far one.
+            near, far = (other, moving) if direction in (N, NE) else (moving, other)
+            pair[near][2] += 1
+            pair[far][2] -= 1
+            outward = -1 if near == 0 else 1
+            if outward < 0:
+                pair[near][0] -= 1
+            else:
+                pair[near][1] += 1
+            if far == 0:
+                pair[far][0] += 1
+            else:
+                pair[far][1] -= 1
+        else:
+            pair[other][2] -= 1
+    # Diagonals: the leading side sits a pixel higher (image-right facing
+    # south-east, image-left facing north-east).
+    if direction == SE:
+        pair[1][2] -= 1
+    elif direction == NE:
+        pair[0][2] -= 1
+    return [(l[0], l[1], l[2], False) for l in pair]
 
 
 def arms(direction, frame):
-    """(x0, x1, top_y, wrist_y, far) per visible arm; the hand is below the wrist."""
-    swing = {STAND: 0, STEP_A: 1, STEP_B: -1}[frame]
+    """(x0, x1, top_y, wrist_y, far) per visible arm; the hand is below the wrist.
+    Arms swing against the legs, farthest apart at contact."""
+    moving, step = stage(frame)
     if direction == E:
-        return [(15 + swing, 17 + swing, TORSO_TOP, HAND_Y - 1, False)]
+        x0 = 15
+        if step == CONTACT:
+            x0 = 13 if moving == 0 else 17
+        return [(x0, x0 + 2, TORSO_TOP, HAND_Y - 1, False)]
     out = []
     for i, (a0, a1) in enumerate(GEOM[direction]["arms"]):
         far = a1 == a0 and direction in (SE, NE)
-        # Arms swing opposite to the legs: a pixel lower on the forward side.
-        drop = swing if i == 0 else -swing
-        wrist = HAND_Y - 1 + (0 if far else max(0, drop))
+        wrist = HAND_Y - 1
+        if step == CONTACT and not far:
+            # The arm opposite the stepping leg swings forward: lower facing
+            # us, higher facing away.
+            forward = i != moving
+            toward_camera = direction in (S, SE)
+            wrist += 1 if forward == toward_camera else -1
+        if (direction == SE and i == 1) or (direction == NE and i == 0):
+            wrist -= 1
         out.append((a0, a1, TORSO_TOP + (1 if far else 0), wrist - (1 if far else 0), far))
     return out
 
@@ -163,8 +233,8 @@ def body(f, d, fr):
     side_strip(f, d, TORSO_TOP, TORSO_BOTTOM)
     for a0, a1, top, wrist, far in arms(d, fr):
         f.rect(a0, top, a1, wrist + 1, 1 if far else 2, lit=not far)
-    for l0, l1, bottom in legs(d, fr):
-        f.rect(l0, LEG_TOP, l1, bottom)
+    for l0, l1, bottom, far in legs(d, fr):
+        f.raw_rect(l0, LEG_TOP - f.lift, l1, bottom, 1 if far else 2)
 
 
 def eyes(f, d, fr):
@@ -321,10 +391,10 @@ def top_jacket(f, d, fr):
 
 def bottom_pants(f, d, fr, leg_rows=None):
     t0, t1 = torso(d)
-    f.rect(t0, TORSO_BOTTOM, t1, LEG_TOP, 1, lit=False)
-    for l0, l1, bottom in legs(d, fr):
+    f.rect(t0, TORSO_BOTTOM, t1, TORSO_BOTTOM, 1, lit=False)
+    for l0, l1, bottom, far in legs(d, fr):
         end = bottom - 1 if leg_rows is None else min(bottom - 1, LEG_TOP + leg_rows - 1)
-        f.rect(l0, LEG_TOP, l1, end, 2)
+        f.raw_rect(l0, LEG_TOP - f.lift, l1, end, 1 if far else 2)
 
 
 def bottom_shorts(f, d, fr):
@@ -332,13 +402,14 @@ def bottom_shorts(f, d, fr):
 
 
 def shoes(f, d, fr):
-    for l0, l1, bottom in legs(d, fr):
+    for l0, l1, bottom, far in legs(d, fr):
+        k = 0 if far else 1
         if d in (E, SE):
-            f.rect(l0, bottom, l1 + 1, bottom + 2, 1)  # toes toward the facing
+            f.raw_rect(l0, bottom, l1 + 1, bottom + 2, k)  # toes toward the facing
         elif d == NE:
-            f.rect(l0, bottom, l1, bottom + 2, 1)
+            f.raw_rect(l0, bottom, l1, bottom + 2, k)
         else:
-            f.rect(l0 - (1 if l0 < 16 else 0), bottom, l1 + (1 if l0 >= 16 else 0), bottom + 2, 1)
+            f.raw_rect(l0 - (1 if l0 < 16 else 0), bottom, l1 + (1 if l0 >= 16 else 0), bottom + 2, k)
 
 
 LAYERS = {
