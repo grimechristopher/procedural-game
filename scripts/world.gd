@@ -21,7 +21,20 @@ enum Tile {
 	GROUND, FULL, HALF, RAMP, HALF_RAMP, STAIRS, BRIDGE,
 	WEDGE, HALF_WEDGE,
 	CORNER_OUTER, CORNER_INNER, HALF_CORNER_OUTER, HALF_CORNER_INNER,
+	PATH, FLOWERS,
+	# Same shapes as FULL and WEDGE, with dirt sides for blocks buried under others.
+	FULL_DIRT, WEDGE_DIRT,
+	# Same shapes as RAMP and HALF_RAMP, grassed over, for the sides of mounds.
+	HILL_RAMP, HALF_HILL_RAMP,
 }
+
+## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
+## top to bottom.
+enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS }
+const TEX_COLS := 4
+const TEX_ROWS := 2
+
+const TILESET := preload("res://assets/tileset.png")
 
 const GROUND_LAYER := -1
 const TOP_LAYER := 3
@@ -67,13 +80,58 @@ func generate(new_seed: int) -> void:
 				set_cell_item(Vector3i(x, 1, z), Tile.FULL)
 
 	var towers: Array[Rect2i] = []
+	var approaches: Array[Vector2i] = []
 	var placed := 0
 	for attempt in platform_count * 10:
 		if placed >= platform_count:
 			break
-		if _try_place_platform(rng, reserved, towers):
+		if _try_place_platform(rng, reserved, towers, approaches):
 			placed += 1
 	_place_bridges(rng, towers)
+	_decorate_ground(rng, approaches)
+	_bury_covered_blocks()
+
+
+## Swaps grass-edged blocks for dirt ones where something sits on top, so
+## stacks show one grass edge at the top instead of one per layer.
+func _bury_covered_blocks() -> void:
+	for pos in get_used_cells():
+		var item := get_cell_item(pos)
+		if item != Tile.FULL and item != Tile.WEDGE:
+			continue
+		var above := get_cell_item(pos + Vector3i.UP)
+		if above == INVALID_CELL_ITEM or above == Tile.BRIDGE:
+			continue
+		if item == Tile.FULL:
+			set_cell_item(pos, Tile.FULL_DIRT)
+		else:
+			set_cell_item(pos, Tile.WEDGE_DIRT, get_cell_item_orientation(pos))
+
+
+## Scatters flowers, then wears dirt paths from spawn to each way up.
+func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> void:
+	for x in range(1, map_size.x - 1):
+		for z in range(1, map_size.y - 1):
+			if rng.randf() < 0.08:
+				set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.FLOWERS)
+
+	# Breadth-first over ground-level steps, so paths go around obstacles.
+	var came_from := { spawn_cell: spawn_cell }
+	var frontier: Array[Vector2i] = [spawn_cell]
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_front()
+		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
+			if not came_from.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
+				came_from[c + d] = c
+				frontier.append(c + d)
+	for target in targets:
+		if not came_from.has(target):
+			continue
+		var c := target
+		while c != spawn_cell:
+			set_cell_item(Vector3i(c.x, GROUND_LAYER, c.y), Tile.PATH)
+			c = came_from[c]
+		set_cell_item(Vector3i(c.x, GROUND_LAYER, c.y), Tile.PATH)
 
 
 ## Places a rectangular platform: half height, full height, or a two-high
@@ -81,7 +139,8 @@ func generate(new_seed: int) -> void:
 ## mound with ramps on every side and corner slopes between them.
 ## Platforms 3x3 and up may get their corners cut diagonally with wedges.
 ## Keeps a one-cell walkway around everything so nothing gets sealed off.
-func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, towers: Array[Rect2i]) -> bool:
+func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, towers: Array[Rect2i],
+		approaches: Array[Vector2i]) -> bool:
 	var roll := rng.randf()
 	var kind: int = 0 if roll < 0.25 else (1 if roll < 0.5 else (2 if roll < 0.75 else 3))
 	var mound := kind == 3
@@ -92,17 +151,16 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 		Vector2i(rng.randi_range(5, map_size.x - size.x - 5), rng.randi_range(5, map_size.y - size.y - 5)),
 		size)
 
-	var claim: Array = []
-	var slope_cells: Array = []
+	# Slope cells run outward from the middle of one side, rising toward the platform.
+	# (Mounds have slopes all round; this just picks which side the path comes in.)
 	var up_dir: Vector2i = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT][rng.randi() % 4]
-	if not mound:
-		# Slope cells run outward from the middle of one side, rising toward the platform.
-		var mid := rect.position + rect.size / 2
-		var slope := Vector2i(
-			mid.x if up_dir.x == 0 else (rect.position.x - 1 if up_dir.x > 0 else rect.end.x),
-			mid.y if up_dir.y == 0 else (rect.position.y - 1 if up_dir.y > 0 else rect.end.y))
-		slope_cells = [slope] if kind < 2 else [slope, slope - up_dir]
-		claim = slope_cells + [slope_cells.back() - up_dir]
+	var mid := rect.position + rect.size / 2
+	var slope := Vector2i(
+		mid.x if up_dir.x == 0 else (rect.position.x - 1 if up_dir.x > 0 else rect.end.x),
+		mid.y if up_dir.y == 0 else (rect.position.y - 1 if up_dir.y > 0 else rect.end.y))
+	var slope_cells: Array = [slope] if kind < 2 or mound else [slope, slope - up_dir]
+	var approach: Vector2i = slope_cells.back() - up_dir
+	var claim: Array = [] if mound else slope_cells + [approach]
 	var footprint := rect.grow(2 if mound else 1)
 	for x in range(footprint.position.x, footprint.end.x):
 		for z in range(footprint.position.y, footprint.end.y):
@@ -122,7 +180,6 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 		_surround_with_slopes(rect, half)
 	else:
 		var slope_tile: Tile = Tile.HALF_RAMP if half else (Tile.STAIRS if rng.randf() < 0.5 else Tile.RAMP)
-		var slope: Vector2i = slope_cells[0]
 		if kind == 2:
 			set_cell_item(Vector3i(slope.x, 0, slope.y), Tile.FULL)
 			set_slope(slope, 1, slope_tile, up_dir)
@@ -135,6 +192,7 @@ func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, tower
 
 	for c in claim:
 		reserved[c] = true
+	approaches.append(approach)
 	return true
 
 
@@ -147,7 +205,7 @@ func _cut_corners(rect: Rect2i, layers: int, wedge: Tile) -> void:
 
 ## Rings a platform with ramps rising toward it and outer corner slopes.
 func _surround_with_slopes(rect: Rect2i, half: bool) -> void:
-	var ramp := Tile.HALF_RAMP if half else Tile.RAMP
+	var ramp := Tile.HALF_HILL_RAMP if half else Tile.HILL_RAMP
 	var ring := rect.grow(1)
 	for x in range(rect.position.x, rect.end.x):
 		set_slope(Vector2i(x, ring.position.y), 0, ramp, Vector2i.DOWN)
@@ -367,7 +425,7 @@ func _center(s: Dictionary) -> float:
 
 ## Vertical extent (bottom, top) a tile occupies in world space.
 static func _is_wedge(tile: int) -> bool:
-	return tile == Tile.WEDGE or tile == Tile.HALF_WEDGE
+	return tile == Tile.WEDGE or tile == Tile.HALF_WEDGE or tile == Tile.WEDGE_DIRT
 
 
 static func _is_corner_slope(tile: int) -> bool:
@@ -376,7 +434,7 @@ static func _is_corner_slope(tile: int) -> bool:
 
 static func _span(tile: int, layer: int) -> Vector2:
 	match tile:
-		Tile.HALF, Tile.HALF_RAMP, Tile.HALF_WEDGE, Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER:
+		Tile.HALF, Tile.HALF_RAMP, Tile.HALF_HILL_RAMP, Tile.HALF_WEDGE, Tile.HALF_CORNER_OUTER, Tile.HALF_CORNER_INNER:
 			return Vector2(layer, layer + 0.5)
 		Tile.BRIDGE: return Vector2(layer + 1.0 - BRIDGE_THICKNESS, layer + 1.0)
 	return Vector2(layer, layer + 1.0)
@@ -384,8 +442,8 @@ static func _span(tile: int, layer: int) -> Vector2:
 
 static func _rise(tile: int) -> float:
 	match tile:
-		Tile.RAMP, Tile.STAIRS: return 1.0
-		Tile.HALF_RAMP: return 0.5
+		Tile.RAMP, Tile.HILL_RAMP, Tile.STAIRS: return 1.0
+		Tile.HALF_RAMP, Tile.HALF_HILL_RAMP: return 0.5
 	return 0.0
 
 
@@ -394,32 +452,57 @@ static func _rise(tile: int) -> float:
 # are modeled rising toward -Z; GridMap orientation rotates them.
 
 func _build_mesh_library() -> MeshLibrary:
-	var lib := MeshLibrary.new()
+	var mat := StandardMaterial3D.new()
+	mat.albedo_texture = TILESET
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+
+	# Which tileset tile each kind of face uses.
+	var grass_block := { top = Tex.GRASS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }
+	var ramp := { top = Tex.PATH, side = Tex.DIRT, slope = Tex.PATH }
+	var hill := { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }
 	var full_box := _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 1, 0.5))
-	var stone := Color(0.55, 0.53, 0.58)
-	var sand := Color(0.80, 0.70, 0.48)
-	_add_item(lib, Tile.GROUND, "Ground", full_box, Color(0.42, 0.68, 0.36))
-	_add_item(lib, Tile.FULL, "Full", full_box, stone)
-	_add_item(lib, Tile.HALF, "Half", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.5, 0.5)), sand)
-	_add_item(lib, Tile.RAMP, "Ramp", _ramp_faces(1.0), stone)
-	_add_item(lib, Tile.HALF_RAMP, "HalfRamp", _ramp_faces(0.5), sand)
-	_add_item(lib, Tile.STAIRS, "Stairs", _stairs_faces(1.0, STAIR_STEPS), stone)
-	_add_item(lib, Tile.WEDGE, "Wedge", _wedge_faces(1.0), stone)
-	_add_item(lib, Tile.HALF_WEDGE, "HalfWedge", _wedge_faces(0.5), sand)
-	_add_item(lib, Tile.CORNER_OUTER, "CornerOuter", _outer_corner_faces(1.0), stone)
-	_add_item(lib, Tile.CORNER_INNER, "CornerInner", _inner_corner_faces(1.0), stone)
-	_add_item(lib, Tile.HALF_CORNER_OUTER, "HalfCornerOuter", _outer_corner_faces(0.5), sand)
-	_add_item(lib, Tile.HALF_CORNER_INNER, "HalfCornerInner", _inner_corner_faces(0.5), sand)
-	_add_item(lib, Tile.BRIDGE, "Bridge", _box_faces(Vector3(-0.5, 1.0 - BRIDGE_THICKNESS, -0.5), Vector3(0.5, 1, 0.5)), Color(0.55, 0.36, 0.22))
+
+	var lib := MeshLibrary.new()
+	var items := [
+		[Tile.GROUND, "Ground", full_box, grass_block],
+		[Tile.PATH, "Path", full_box, { top = Tex.PATH, side = Tex.DIRT, slope = Tex.PATH }],
+		[Tile.FLOWERS, "Flowers", full_box, { top = Tex.FLOWERS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }],
+		[Tile.FULL, "Full", full_box, grass_block],
+		[Tile.FULL_DIRT, "FullDirt", full_box, { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
+		[Tile.WEDGE_DIRT, "WedgeDirt", _wedge_faces(1.0), { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
+		[Tile.HALF, "Half", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.5, 0.5)), grass_block],
+		[Tile.RAMP, "Ramp", _ramp_faces(1.0), ramp],
+		[Tile.HALF_RAMP, "HalfRamp", _ramp_faces(0.5), ramp],
+		[Tile.HILL_RAMP, "HillRamp", _ramp_faces(1.0), hill],
+		[Tile.HALF_HILL_RAMP, "HalfHillRamp", _ramp_faces(0.5), hill],
+		[Tile.STAIRS, "Stairs", _stairs_faces(1.0, STAIR_STEPS), { top = Tex.STONE, side = Tex.STONE, slope = Tex.STONE }],
+		[Tile.WEDGE, "Wedge", _wedge_faces(1.0), grass_block],
+		[Tile.HALF_WEDGE, "HalfWedge", _wedge_faces(0.5), grass_block],
+		[Tile.CORNER_OUTER, "CornerOuter", _outer_corner_faces(1.0), hill],
+		[Tile.CORNER_INNER, "CornerInner", _inner_corner_faces(1.0), hill],
+		[Tile.HALF_CORNER_OUTER, "HalfCornerOuter", _outer_corner_faces(0.5), hill],
+		[Tile.HALF_CORNER_INNER, "HalfCornerInner", _inner_corner_faces(0.5), hill],
+		[Tile.BRIDGE, "Bridge", _box_faces(Vector3(-0.5, 1.0 - BRIDGE_THICKNESS, -0.5), Vector3(0.5, 1, 0.5)),
+			{ top = Tex.PLANKS, side = Tex.PLANKS, slope = Tex.PLANKS }],
+	]
+	for item in items:
+		lib.create_item(item[0])
+		lib.set_item_name(item[0], item[1])
+		lib.set_item_mesh(item[0], _build_mesh(item[2], item[3], mat))
 	return lib
 
 
-func _add_item(lib: MeshLibrary, id: int, item_name: String, faces: Array, color: Color) -> void:
+func _build_mesh(faces: Array, skin: Dictionary, mat: Material) -> ArrayMesh:
+	var top_y := 0.0
+	for face in faces:
+		for p in face[0]:
+			top_y = maxf(top_y, p.y)
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 	for face in faces:
 		var pts: Array = face[0]
 		var n: Vector3 = face[1]
+		var tex: int = skin.top if n.y > 0.99 else (skin.slope if n.y > 0.1 else (Tex.DIRT if n.y < -0.5 else skin.side))
 		for i in range(1, pts.size() - 1):
 			var a: Vector3 = pts[0]
 			var b: Vector3 = pts[i]
@@ -431,13 +514,27 @@ func _add_item(lib: MeshLibrary, id: int, item_name: String, faces: Array, color
 				c = tmp
 			for v in [a, b, c]:
 				st.set_normal(n)
+				st.set_uv(_atlas_uv(tex, _face_uv(v, n, top_y)))
 				st.add_vertex(v)
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
 	st.set_material(mat)
-	lib.create_item(id)
-	lib.set_item_name(id, item_name)
-	lib.set_item_mesh(id, st.commit())
+	return st.commit()
+
+
+## Planar UVs in 0..1: tops and slopes project straight down; walls run
+## along the wall, measured down from the top of the piece, so grass edges
+## sit at the top even on half-height blocks.
+static func _face_uv(p: Vector3, n: Vector3, top_y: float) -> Vector2:
+	if absf(n.y) > 0.1:
+		return Vector2(p.x + 0.5, p.z + 0.5)
+	var along := Vector3.UP.cross(n).normalized()
+	return Vector2(p.dot(along) + 0.5, top_y - p.y)
+
+
+static func _atlas_uv(tex: int, uv: Vector2) -> Vector2:
+	# Inset half a texel so nearest sampling never bleeds into a neighbor tile.
+	var inset := 0.5 / 16.0
+	uv = uv.clamp(Vector2(inset, inset), Vector2(1.0 - inset, 1.0 - inset))
+	return Vector2((tex % TEX_COLS + uv.x) / TEX_COLS, (tex / TEX_COLS + uv.y) / TEX_ROWS)
 
 
 ## Each face is [points (convex, in order), outward normal].
