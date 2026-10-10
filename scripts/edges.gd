@@ -28,11 +28,9 @@ const HALF_CLIFF_LIP := 0.65
 const FACE_OFFSET := 0.01
 const WATER_SURFACE := -0.25
 const SHADOW_WIDTH := 0.45
-## Cliffs facing away from the camera (north) hide their face and the
-## ground at their foot, so their drop gets a dark rim along the lip and a
-## longer shadow reaching out past the hidden ground.
+## Cliffs facing away from the camera (north) hide their face and foot, so
+## their drop is marked by a dark rim along the lip instead.
 const RIM_DEPTH := 0.12
-const BACK_SHADOW_REACH := 0.6
 const SHADOW_ALPHA := 0.35
 ## Steps for a lip sweeping round a right-angle corner.
 const CORNER_STEPS := 4
@@ -55,7 +53,7 @@ static func build(world: GridWorld, heights: PackedInt32Array, terrain: Terrain)
 		faces.append(_face(s))
 		if s.o.y < -0.3:
 			faces.append(_rim(s))
-		if not s.water:
+		if not s.water and s.o.y > -0.3:
 			_shadow(shadow, s)
 	faces += _corners(segments)
 	var root := Node3D.new()
@@ -234,17 +232,11 @@ static func _rim(s: Dictionary) -> Array:
 
 
 ## A strip of shade on the ground at the foot of a face, fading outward.
-## Behind a cliff facing away from the camera it reaches past the ground the
-## cliff hides, so the drop shows.
 static func _shadow(st: SurfaceTool, s: Dictionary) -> void:
 	var y: float = (s.bottom + 0.004) * GridWorld.BLOCK_HEIGHT
 	var near0 := Vector3(s.p0.x, y, s.p0.y)
 	var near1 := Vector3(s.p1.x, y, s.p1.y)
-	var width := SHADOW_WIDTH
-	if s.o.y < -0.3:
-		var hidden: float = (s.top - s.bottom) * GridWorld.BLOCK_HEIGHT / tan(deg_to_rad(GridWorld.CAMERA_PITCH_DEGREES))
-		width = hidden + BACK_SHADOW_REACH
-	var out := Vector3(s.o.x, 0, s.o.y) * width
+	var out := Vector3(s.o.x, 0, s.o.y) * SHADOW_WIDTH
 	var dark := Color(0, 0, 0, SHADOW_ALPHA)
 	var clear := Color(0, 0, 0, 0)
 	for v in [[near0, dark], [near1, dark], [near1 + out, clear],
