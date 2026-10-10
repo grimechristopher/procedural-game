@@ -1,6 +1,6 @@
-# Claude Code
+# Claude Code (local only)
 .claude/
-CLAUDE.md
+CLAUDE.local.md
 
 # Sidecar (Claude working docs, notes, plans)
 sidecar/
