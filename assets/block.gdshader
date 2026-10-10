@@ -23,7 +23,7 @@ void fragment() {
 	if (n.y > 0.99) {
 		shade = 1.0;
 	} else if (n.y > 0.1) {
-		shade = 0.9 + 0.1 * n.z - 0.03 * n.x;
+		shade = 0.86 + 0.16 * n.z - 0.08 * n.x;
 	} else if (n.y < -0.5) {
 		shade = 0.5;
 	} else {

@@ -1,7 +1,9 @@
 class_name GridWorld
 extends GridMap
 
-## Builds its own MeshLibrary of basic blocks and generates a tile map.
+## Builds its own MeshLibrary of basic blocks and generates the world: open
+## terrain shaped by Terrain (hills, terraced mountains, lakes and an ocean
+## round the edge), with a settlement at the centre (farm, plaza, town).
 ##
 ## Layer y = -1 is ground; tiles stack on layers 0 and up. Movement uses grid
 ## coords (x, z) plus the layer of the tile you stand on, since one column can
@@ -51,6 +53,8 @@ enum Tile {
 	# Invisible solid cells under a building's footprint (the building
 	# itself is a mesh; see Buildings). The door cell is tagged.
 	BUILDING, BUILDING_DOOR,
+	# A full block topped with bare rock, for high ground.
+	ROCK,
 }
 
 ## Prop tiles, in the order of their sprites in assets/props.png.
@@ -92,17 +96,31 @@ const WATER_TEXTURE := preload("res://assets/water.png")
 const PROPS_TEXTURE := preload("res://assets/props.png")
 
 const GROUND_LAYER := -1
-const TOP_LAYER := 3
+const TOP_LAYER := 12
 const STAIR_STEPS := 4
 const HEADROOM := 1.0
 const BRIDGE_THICKNESS := 0.15
 const EPS := 0.001
 const NO_MOVE := -999
 
-@export var map_size := Vector2i(36, 36)
-@export var platform_count := 16
-@export var bridge_count := 4
+@export var map_size := Vector2i(96, 96)
 @export var map_seed := 1
+
+## Terrain levels off to flat ground within this many cells of spawn, for
+## the settlement, blending back to the wild over the next SETTLEMENT_BLEND.
+const SETTLEMENT_RADIUS := 15.0
+const SETTLEMENT_BLEND := 8.0
+## Cells over which the land falls away into ocean at the map's edge.
+const ISLAND_FALLOFF := 10.0
+const MAX_HEIGHT := 10
+## Ground this high or higher is bare rock.
+const ROCK_LEVEL := 5
+## Chance a usable cliff step gets stairs up it, before the connectivity pass.
+const STAIR_CHANCE := 0.08
+## Unreachable pockets this small get levelled if stairs won't fit.
+const SMALL_POCKET := 8
+const ORTHOGONAL: Array[Vector2i] = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]
+const DIAGONAL: Array[Vector2i] = [Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
 
 var spawn_cell := Vector2i.ZERO
 
@@ -133,42 +151,415 @@ func generate(new_seed: int) -> void:
 		mesh.queue_free()
 	var rng := RandomNumberGenerator.new()
 	rng.seed = new_seed
+	var terrain := Terrain.new(new_seed)
 	spawn_cell = map_size / 2
+
+	var heights := _shape_heights(terrain)
+	_build_terrain(terrain, heights)
 
 	var reserved := {}
 	for x in range(spawn_cell.x - 2, spawn_cell.x + 3):
 		for z in range(spawn_cell.y - 2, spawn_cell.y + 3):
 			reserved[Vector2i(x, z)] = true
-
-	for x in map_size.x:
-		for z in map_size.y:
-			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.GROUND)
-			if x == 0 or z == 0 or x == map_size.x - 1 or z == map_size.y - 1:
-				set_cell_item(Vector3i(x, 0, z), Tile.FULL)
-				set_cell_item(Vector3i(x, 1, z), Tile.FULL)
-
-	var towers: Array[Rect2i] = []
 	var approaches: Array[Vector2i] = []
 	_place_farm(reserved, approaches)
 	_place_town(reserved, approaches)
-	_place_river(rng, reserved)
-	var placed := 0
-	for attempt in platform_count * 10:
-		if placed >= platform_count:
-			break
-		if _try_place_platform(rng, reserved, towers, approaches):
-			placed += 1
-	for enclosure in [true, false]:
-		for attempt in 20:
-			if _try_place_enclosure(rng, reserved, approaches, enclosure):
+	for walled in [true, false]:
+		for attempt in 40:
+			if _try_place_enclosure(rng, reserved, approaches, walled):
 				break
-	_place_bridges(rng, towers)
 	_decorate_ground(rng, approaches)
 	for x in range(spawn_cell.x - 1, spawn_cell.x + 2):
 		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
 			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
-	_place_scenery(rng, reserved)
+	_place_scenery(terrain, heights, reserved)
+	_connect_everything(heights, reserved)
 	_bury_covered_blocks()
+
+
+# --- Terrain ------------------------------------------------------------------
+
+## Whole-block heights per cell (-1 for water) from the terrain's elevation,
+## flattened round the settlement, sunk into ocean at the edges, terraced so
+## no two side-by-side cells differ by more than one block, and smoothed of
+## one-cell knobs and pits.
+func _shape_heights(terrain: Terrain) -> PackedInt32Array:
+	var heights := PackedInt32Array()
+	heights.resize(map_size.x * map_size.y)
+	for z in map_size.y:
+		for x in map_size.x:
+			var e := terrain.elevation(x, z)
+			var edge := minf(minf(x, map_size.x - 1 - x), minf(z, map_size.y - 1 - z)) / ISLAND_FALLOFF
+			e = lerpf(-2.0, e, smoothstep(0.0, 1.0, edge))
+			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
+			e = lerpf(0.5, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
+			heights[z * map_size.x + x] = -1 if e < 0.0 else mini(floori(e), MAX_HEIGHT)
+	_terrace(heights)
+	for i in 3:
+		_despeckle(heights)
+		_terrace(heights)
+	return heights
+
+
+## Lowers cells until none is more than a block above a side neighbour.
+func _terrace(heights: PackedInt32Array) -> void:
+	var changed := true
+	while changed:
+		changed = false
+		for z in map_size.y:
+			for x in map_size.x:
+				var h := heights[z * map_size.x + x]
+				if h < 1:
+					continue
+				var lowest := h
+				for d in ORTHOGONAL:
+					var n := _height_at(heights, Vector2i(x, z) + d)
+					if n != -99:
+						lowest = mini(lowest, maxi(n, 0))
+				if h > lowest + 1:
+					heights[z * map_size.x + x] = lowest + 1
+					changed = true
+
+
+## Knocks down cells standing above three or four of their side neighbours,
+## and fills in cells (or puddles) sunk below three or four of them.
+func _despeckle(heights: PackedInt32Array) -> void:
+	var source := heights.duplicate()
+	for z in map_size.y:
+		for x in map_size.x:
+			var h := source[z * map_size.x + x]
+			var above := 0
+			var below := 0
+			for d in ORTHOGONAL:
+				var n := _height_at(source, Vector2i(x, z) + d)
+				if n == -99:
+					continue
+				if n < h:
+					above += 1
+				elif n > h:
+					below += 1
+			if above >= 3 and h > 0:
+				heights[z * map_size.x + x] = h - 1
+			elif below >= 3:
+				heights[z * map_size.x + x] = h + 1
+
+
+## Height at a cell, or -99 outside the map.
+func _height_at(heights: PackedInt32Array, cell: Vector2i) -> int:
+	if cell.x < 0 or cell.y < 0 or cell.x >= map_size.x or cell.y >= map_size.y:
+		return -99
+	return heights[cell.y * map_size.x + cell.x]
+
+
+## Stacks blocks to each cell's height, then dresses each one-block step:
+## grassy ramps and corner slopes on gentle ground, or cliffs with wedged
+## corners and the odd staircase where the terrain is cliffy.
+func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
+	for z in map_size.y:
+		for x in map_size.x:
+			var h := heights[z * map_size.x + x]
+			if h < 0:
+				set_ground(Vector2i(x, z), Tile.WATER)
+				continue
+			set_ground(Vector2i(x, z), Tile.GROUND)
+			for layer in h:
+				var top := layer == h - 1 and h >= ROCK_LEVEL
+				set_cell_item(Vector3i(x, layer, z), Tile.ROCK if top else Tile.FULL)
+	var settled := SETTLEMENT_RADIUS + 2.0
+	for z in map_size.y:
+		for x in map_size.x:
+			var cell := Vector2i(x, z)
+			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
+				continue
+			if terrain.is_cliffy(x, z):
+				_wedge_cliff_corner(cell, heights)
+			else:
+				_slope_step(cell, heights)
+	for z in map_size.y:
+		for x in map_size.x:
+			if heights[z * map_size.x + x] >= 0 and terrain.is_cliffy(x, z):
+				_maybe_stairs(Vector2i(x, z), heights)
+
+
+## On gentle ground, turns a cell at the foot of a one-block step into a
+## grassy ramp (one higher side), an inner corner slope (two adjacent higher
+## sides, and the corner between them only a block up) or an outer corner
+## slope (only a diagonal higher). Ground climbing diagonally stays stepped.
+func _slope_step(cell: Vector2i, heights: PackedInt32Array) -> void:
+	var h := _height_at(heights, cell)
+	if get_cell_item(Vector3i(cell.x, h, cell.y)) != INVALID_CELL_ITEM:
+		return
+	var up: Array[Vector2i] = []
+	for d in ORTHOGONAL:
+		if _height_at(heights, cell + d) == h + 1:
+			up.append(d)
+	if up.size() == 1 and _height_at(heights, cell - up[0]) <= h:
+		set_slope(cell, h, Tile.HILL_RAMP, up[0])
+	elif up.size() == 2 and up[0] != -up[1] and _height_at(heights, cell + up[0] + up[1]) == h + 1:
+		set_corner(cell, h, Tile.CORNER_INNER, up[0] + up[1])
+	elif up.is_empty():
+		var diagonal_up: Array[Vector2i] = []
+		for d in DIAGONAL:
+			if _height_at(heights, cell + d) == h + 1:
+				diagonal_up.append(d)
+		if diagonal_up.size() == 1:
+			set_corner(cell, h, Tile.CORNER_OUTER, diagonal_up[0])
+
+
+## On cliffy ground, cuts a plateau's outside corner at 45 degrees: a cell
+## whose two neighbours on adjacent sides, and the diagonal between them,
+## are a block lower, with level plateau on the other sides and diagonal.
+## (Ground that keeps climbing diagonally stays stepped: wedging every step
+## would leave cells joined only at their corners.)
+func _wedge_cliff_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
+	var h := _height_at(heights, cell)
+	if h < 1:
+		return
+	for d in DIAGONAL:
+		var a := Vector2i(d.x, 0)
+		var b := Vector2i(0, d.y)
+		if _height_at(heights, cell + a) == h - 1 and _height_at(heights, cell + b) == h - 1 \
+				and _height_at(heights, cell + d) <= h - 1 and _height_at(heights, cell + d) >= 0 \
+				and _height_at(heights, cell - a) == h and _height_at(heights, cell - b) == h \
+				and _height_at(heights, cell - d) == h:
+			set_corner(cell, h - 1, Tile.WEDGE, -d)
+			return
+
+
+## Now and then puts stairs at the foot of a cliff step, where there's
+## level ground behind to walk up from.
+func _maybe_stairs(cell: Vector2i, heights: PackedInt32Array) -> void:
+	for d in ORTHOGONAL:
+		if Terrain.cell_hash(cell.x, cell.y, d.x * 3 + d.y) < STAIR_CHANCE and _can_hold_stairs(cell, d, heights):
+			set_slope(cell, _height_at(heights, cell), Tile.STAIRS, d)
+			return
+
+
+## Whether stairs at cell rising toward dir would lead from level ground up
+## onto level ground a block higher.
+func _can_hold_stairs(cell: Vector2i, dir: Vector2i, heights: PackedInt32Array) -> bool:
+	var h := _height_at(heights, cell)
+	if h < 0 or _height_at(heights, cell + dir) != h + 1 or _height_at(heights, cell - dir) != h:
+		return false
+	if get_cell_item(Vector3i(cell.x, h, cell.y)) != INVALID_CELL_ITEM:
+		return false
+	var above := cell + dir
+	if get_cell_item(Vector3i(above.x, h, above.y)) not in [Tile.FULL, Tile.ROCK]:
+		return false  # the top of the step is a wedge or otherwise not walkable
+	var ground := ground_tile(cell)
+	return h > 0 or ground == Tile.GROUND or ground == Tile.FLOWERS
+
+
+## Forests, boulders, bushes and tall grass on level ground, away from
+## steps (so stairs and ramps stay approachable) and anything reserved.
+func _place_scenery(terrain: Terrain, heights: PackedInt32Array, reserved: Dictionary) -> void:
+	for z in range(1, map_size.y - 1):
+		for x in range(1, map_size.x - 1):
+			var cell := Vector2i(x, z)
+			var h := heights[z * map_size.x + x]
+			if h < 0 or reserved.has(cell) or get_cell_item(Vector3i(x, h, z)) != INVALID_CELL_ITEM:
+				continue
+			if h == 0 and ground_tile(cell) != Tile.GROUND and ground_tile(cell) != Tile.FLOWERS:
+				continue
+			var level := true
+			for d in ORTHOGONAL:
+				if _height_at(heights, cell + d) != h or get_cell_item(Vector3i(x + d.x, h, z + d.y)) in [Tile.STAIRS, Tile.HILL_RAMP]:
+					level = false
+			if not level:
+				continue
+			var roll := Terrain.cell_hash(x, z, 7)
+			if roll < terrain.forest(x, z):
+				set_cell_item(Vector3i(x, h, z), Tile.TREE)
+			elif roll > 0.985:
+				set_cell_item(Vector3i(x, h, z), Tile.BOULDER if h >= ROCK_LEVEL or roll > 0.993 else Tile.BUSH)
+			elif terrain.is_tall_grass(x, z):
+				set_cell_item(Vector3i(x, h, z), Tile.TALL_GRASS)
+
+
+## Makes sure everything on land can be walked to from spawn. Each round
+## finds the separate pockets of ground that can't be reached and joins
+## each to the reachable area once: with stairs where it's a block higher
+## or lower, or by clearing a tree or rock that walls it off. Small pockets
+## that can't take stairs (knobs and pits left by the noise) are levelled
+## to the ground beside them instead. Only land cut off by water stays
+## unreachable.
+func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> void:
+	var surface := []
+	surface.resize(map_size.x * map_size.y)
+	for z in map_size.y:
+		for x in map_size.x:
+			surface[z * map_size.x + x] = _top_surface(Vector2i(x, z))
+	for attempt in 40:
+		var reached := _reach(surface, PackedByteArray(), spawn_cell)
+		var pockets := _label_pockets(surface, reached)
+		var members := {}
+		for i in pockets.size():
+			if pockets[i] != 0:
+				if not members.has(pockets[i]):
+					members[pockets[i]] = []
+				members[pockets[i]].append(Vector2i(i % map_size.x, i / map_size.x))
+		var joined := 0
+		for pocket in members:
+			var cells: Array = members[pocket]
+			var done := false
+			for cell in cells:
+				if _join(cell, reached, surface, heights, reserved):
+					done = true
+					break
+			if not done and cells.size() <= SMALL_POCKET:
+				done = _level_pocket(cells, reached, surface, heights, reserved)
+			if done:
+				joined += 1
+		if joined == 0:
+			return
+
+
+## The highest surface in a column (terrain has one per column), found
+## from the top down rather than by testing every layer.
+func _top_surface(cell: Vector2i) -> Dictionary:
+	for layer in range(TOP_LAYER, GROUND_LAYER - 1, -1):
+		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
+		if item == INVALID_CELL_ITEM or _is_thin(item) or item == Tile.TALL_GRASS:
+			continue
+		return _surface(cell, layer)
+	return {}
+
+
+## Cells reachable from start, walking through matching edges. With a
+## non-empty `within`, only cells marked there are entered.
+func _reach(surface: Array, within: PackedByteArray, start: Vector2i) -> PackedByteArray:
+	var reached := PackedByteArray()
+	reached.resize(map_size.x * map_size.y)
+	reached[start.y * map_size.x + start.x] = 1
+	var frontier: Array[Vector2i] = [start]
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_back()
+		var sc: Dictionary = surface[c.y * map_size.x + c.x]
+		for d in ORTHOGONAL:
+			var n := c + d
+			if n.x < 0 or n.y < 0 or n.x >= map_size.x or n.y >= map_size.y:
+				continue
+			var i := n.y * map_size.x + n.x
+			if reached[i] or (not within.is_empty() and not within[i]):
+				continue
+			var e := _edge(sc, d)
+			if not is_nan(e) and is_equal_approx(_edge(surface[i], -d), e):
+				reached[i] = 1
+				frontier.append(n)
+	return reached
+
+
+## Numbers the separate pockets of walkable ground that weren't reached
+## (0 for reached or unwalkable cells).
+func _label_pockets(surface: Array, reached: PackedByteArray) -> PackedInt32Array:
+	var labels := PackedInt32Array()
+	labels.resize(map_size.x * map_size.y)
+	var unreached := PackedByteArray()
+	unreached.resize(map_size.x * map_size.y)
+	for i in labels.size():
+		unreached[i] = 1 if not reached[i] and not surface[i].is_empty() else 0
+	var next := 0
+	for i in labels.size():
+		if not unreached[i] or labels[i] != 0:
+			continue
+		next += 1
+		var pocket := _reach(surface, unreached, Vector2i(i % map_size.x, i / map_size.x))
+		for k in pocket.size():
+			if pocket[k]:
+				labels[k] = next
+				unreached[k] = 0
+	return labels
+
+
+## Brings a small pocket level with reachable flat ground beside it (or,
+## failing that, with the ground most of its sides meet),
+## adding or removing a block per cell, and clears away slopes and wedges
+## around it that were shaped for the old heights.
+func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
+		reserved: Dictionary) -> bool:
+	var target := -99
+	for c in cells:
+		for d in ORTHOGONAL:
+			var r: Vector2i = c + d
+			var hr := _height_at(heights, r)
+			var ri := r.y * map_size.x + r.x
+			if hr >= 0 and reached[ri] and _rise(surface[ri].get("tile", -1)) == 0.0 and not surface[ri].is_empty() \
+					and absi(hr - _height_at(heights, c)) == 1:
+				target = hr
+				break
+		if target != -99:
+			break
+	if target == -99:
+		# Nothing reachable and flat beside it (it's boxed in by slopes):
+		# level it with the most common height around it instead.
+		var votes := {}
+		for c in cells:
+			for d in ORTHOGONAL:
+				var hn := _height_at(heights, c + d)
+				if hn >= 0 and absi(hn - _height_at(heights, c)) == 1:
+					votes[hn] = votes.get(hn, 0) + 1
+		for hn in votes:
+			if target == -99 or votes[hn] > votes[target]:
+				target = hn
+	if target == -99:
+		return false
+	for c in cells:
+		var h := _height_at(heights, c)
+		if absi(h - target) != 1 or reserved.has(c):
+			continue
+		for layer in range(maxi(h, 0), TOP_LAYER + 1):
+			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+		if target < h:
+			set_cell_item(Vector3i(c.x, h - 1, c.y), INVALID_CELL_ITEM)
+		else:
+			set_cell_item(Vector3i(c.x, h, c.y), Tile.FULL)
+		heights[c.y * map_size.x + c.x] = target
+		for d in ORTHOGONAL + DIAGONAL + [Vector2i.ZERO]:
+			var n: Vector2i = c + d
+			var hn := _height_at(heights, n)
+			if hn < 0:
+				continue
+			for layer in [hn - 1, hn]:
+				var item := get_cell_item(Vector3i(n.x, layer, n.y))
+				if item == Tile.WEDGE:
+					set_cell_item(Vector3i(n.x, layer, n.y), Tile.FULL)
+				elif item in [Tile.HILL_RAMP, Tile.CORNER_INNER, Tile.CORNER_OUTER]:
+					set_cell_item(Vector3i(n.x, layer, n.y), INVALID_CELL_ITEM)
+			surface[n.y * map_size.x + n.x] = _top_surface(n)
+	return true
+
+
+## Joins the pocket containing u to reachable ground next to it, if it
+## can: stairs up or down a one-block step, or clearing a tree or rock
+## between u and reachable ground at the same level.
+func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
+		reserved: Dictionary) -> bool:
+	var hu := _height_at(heights, u)
+	for d in ORTHOGONAL:
+		var r := u + d
+		var hr := _height_at(heights, r)
+		if hr < 0:
+			continue
+		var ri := r.y * map_size.x + r.x
+		if reached[ri] and absi(hu - hr) == 1:
+			var low := u if hu < hr else r
+			var dir := d if hu < hr else -d
+			if not reserved.has(low) and _can_hold_stairs(low, dir, heights):
+				set_slope(low, mini(hu, hr), Tile.STAIRS, dir)
+				surface[low.y * map_size.x + low.x] = _top_surface(low)
+				return true
+		elif not reached[ri] and hr == hu and surface[ri].is_empty() and not reserved.has(r):
+			# r is blocked; clear it if reachable ground at our level lies beyond.
+			var item := get_cell_item(Vector3i(r.x, hr, r.y))
+			if item not in [Tile.TREE, Tile.BOULDER, Tile.BUSH]:
+				continue
+			for d2 in ORTHOGONAL:
+				var b := r + d2
+				if _height_at(heights, b) == hu and reached[b.y * map_size.x + b.x] and not surface[b.y * map_size.x + b.x].is_empty():
+					set_cell_item(Vector3i(r.x, hr, r.y), INVALID_CELL_ITEM)
+					surface[ri] = _top_surface(r)
+					return true
+	return false
 
 
 ## Lays out a field of farmland just south of the spawn plaza, with the
@@ -227,110 +618,6 @@ func building_at(cell: Vector2i) -> Dictionary:
 	return {}
 
 
-## Runs a two-wide river down the map, north to south, well clear of the
-## farm: in through a waterfall in the north wall, out through the south
-## wall, with two plank bridges across it.
-func _place_river(rng: RandomNumberGenerator, reserved: Dictionary) -> void:
-	var lo := 3 if rng.randf() < 0.5 else map_size.x - 9
-	var hi := lo + 4
-	var x := rng.randi_range(lo, hi)
-	var rows: Array[int] = []
-	for z in map_size.y:
-		if z > 1 and z < map_size.y - 2 and rng.randf() < 0.35:
-			x = clampi(x + (1 if rng.randf() < 0.5 else -1), lo, hi)
-		rows.append(x)
-		for dx in 2:
-			var cell := Vector2i(x + dx, z)
-			set_ground(cell, Tile.WATER)
-			var top := Tile.WATERFALL if z == 0 else INVALID_CELL_ITEM
-			set_cell_item(Vector3i(cell.x, 0, z), top)
-			set_cell_item(Vector3i(cell.x, 1, z), top)
-			for nx in range(cell.x - 1, cell.x + 2):
-				for nz in range(z - 1, z + 2):
-					reserved[Vector2i(nx, nz)] = true
-
-	var first := rng.randi_range(4, map_size.y / 2 - 3)
-	for z in [first, rng.randi_range(first + 7, map_size.y - 5)]:
-		for dx in 2:
-			set_slope(Vector2i(rows[z] + dx, z), GROUND_LAYER, Tile.WATER_BRIDGE, Vector2i.RIGHT)
-
-
-## Scatters forest clumps (mostly near the walls), boulders, bushes and
-## patches of tall grass over open grass. Anything solid is only kept if
-## every bit of ground that was reachable before still is.
-func _place_scenery(rng: RandomNumberGenerator, reserved: Dictionary) -> void:
-	var reach := _ground_reachable()
-	var groups := []
-	for i in 14:
-		var near_wall := rng.randf() < 0.6
-		var center := Vector2i(rng.randi_range(1, map_size.x - 2), rng.randi_range(1, map_size.y - 2))
-		if near_wall:
-			var side := rng.randi() % 4
-			var depth := rng.randi_range(1, 3)
-			center = [Vector2i(depth, center.y), Vector2i(map_size.x - 1 - depth, center.y),
-				Vector2i(center.x, depth), Vector2i(center.x, map_size.y - 1 - depth)][side]
-		groups.append([center, 2, 0.6, Tile.TREE])
-	for i in 8:
-		var center := Vector2i(rng.randi_range(2, map_size.x - 3), rng.randi_range(2, map_size.y - 3))
-		groups.append([center, 0, 1.0, Tile.BOULDER if rng.randf() < 0.5 else Tile.BUSH])
-
-	for group in groups:
-		var placed: Array[Vector2i] = []
-		var center: Vector2i = group[0]
-		var radius: int = group[1]
-		for x in range(center.x - radius, center.x + radius + 1):
-			for z in range(center.y - radius, center.y + radius + 1):
-				var cell := Vector2i(x, z)
-				if _is_open_grass(cell, reserved) and rng.randf() < group[2]:
-					set_cell_item(Vector3i(x, 0, z), group[3])
-					placed.append(cell)
-		if placed.is_empty():
-			continue
-		var after := _ground_reachable()
-		var lost := 0
-		for cell in placed:
-			if reach.has(cell):
-				lost += 1
-		if after.size() == reach.size() - lost:
-			reach = after
-		else:
-			for cell in placed:
-				set_cell_item(Vector3i(cell.x, 0, cell.y), INVALID_CELL_ITEM)
-
-	for i in 7:
-		var center := Vector2i(rng.randi_range(2, map_size.x - 3), rng.randi_range(2, map_size.y - 3))
-		for x in range(center.x - 2, center.x + 3):
-			for z in range(center.y - 1, center.y + 2):
-				if _is_open_grass(Vector2i(x, z), {}) and rng.randf() < 0.75:
-					set_cell_item(Vector3i(x, 0, z), Tile.TALL_GRASS)
-
-
-## Grass with nothing on it, away from the walls and anything reserved.
-func _is_open_grass(cell: Vector2i, reserved: Dictionary) -> bool:
-	if cell.x < 1 or cell.y < 1 or cell.x >= map_size.x - 1 or cell.y >= map_size.y - 1 or reserved.has(cell):
-		return false
-	var ground := ground_tile(cell)
-	if ground != Tile.GROUND and ground != Tile.FLOWERS:
-		return false
-	for layer in range(0, TOP_LAYER + 1):
-		if get_cell_item(Vector3i(cell.x, layer, cell.y)) != INVALID_CELL_ITEM:
-			return false
-	return true
-
-
-## Ground cells reachable from spawn by walking at ground level.
-func _ground_reachable() -> Dictionary:
-	var seen := { spawn_cell: true }
-	var frontier: Array[Vector2i] = [spawn_cell]
-	while not frontier.is_empty():
-		var c: Vector2i = frontier.pop_back()
-		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
-			if not seen.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
-				seen[c + d] = true
-				frontier.append(c + d)
-	return seen
-
-
 ## Sets the ground-layer tile of a cell.
 func set_ground(cell: Vector2i, tile: Tile) -> void:
 	set_cell_item(Vector3i(cell.x, GROUND_LAYER, cell.y), tile)
@@ -368,7 +655,8 @@ func _bury_covered_blocks() -> void:
 			set_cell_item(pos, Tile.WEDGE_DIRT, get_cell_item_orientation(pos))
 
 
-## Scatters flowers, then wears dirt paths from spawn to each way up.
+## Scatters flowers, then wears dirt paths from spawn to each building,
+## the farm and the enclosures within reach of the settlement.
 func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> void:
 	for x in range(1, map_size.x - 1):
 		for z in range(1, map_size.y - 1):
@@ -381,7 +669,9 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 	while not frontier.is_empty():
 		var c: Vector2i = frontier.pop_front()
 		for d in [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]:
-			if not came_from.has(c + d) and find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
+			if came_from.has(c + d) or Vector2(c + d).distance_to(Vector2(spawn_cell)) > SETTLEMENT_RADIUS + 4.0:
+				continue
+			if find_move(c, GROUND_LAYER, d) == GROUND_LAYER:
 				came_from[c + d] = c
 				frontier.append(c + d)
 	for target in targets:
@@ -394,82 +684,16 @@ func _decorate_ground(rng: RandomNumberGenerator, targets: Array[Vector2i]) -> v
 			c = came_from[c]
 
 
-## Places a rectangular platform: half height, full height, or a two-high
-## tower, each reached by a ramp or staircase (stacked for towers); or a
-## mound with ramps on every side and corner slopes between them.
-## Platforms 3x3 and up may get their corners cut diagonally with wedges.
-## Keeps a one-cell walkway around everything so nothing gets sealed off.
-func _try_place_platform(rng: RandomNumberGenerator, reserved: Dictionary, towers: Array[Rect2i],
-		approaches: Array[Vector2i]) -> bool:
-	var roll := rng.randf()
-	var kind: int = 0 if roll < 0.25 else (1 if roll < 0.5 else (2 if roll < 0.75 else 3))
-	var mound := kind == 3
-	var half := kind == 0 or (mound and rng.randf() < 0.5)
-	var size := Vector2i(rng.randi_range(1, 3), rng.randi_range(1, 3)) if mound \
-		else Vector2i(rng.randi_range(2, 7), rng.randi_range(2, 7))
-	var rect := Rect2i(
-		Vector2i(rng.randi_range(5, map_size.x - size.x - 5), rng.randi_range(5, map_size.y - size.y - 5)),
-		size)
-
-	# Slope cells run outward from the middle of one side, rising toward the platform.
-	# (Mounds have slopes all round; this just picks which side the path comes in.)
-	var up_dir: Vector2i = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT][rng.randi() % 4]
-	var mid := rect.position + rect.size / 2
-	var slope := Vector2i(
-		mid.x if up_dir.x == 0 else (rect.position.x - 1 if up_dir.x > 0 else rect.end.x),
-		mid.y if up_dir.y == 0 else (rect.position.y - 1 if up_dir.y > 0 else rect.end.y))
-	var gentle := kind == 1 and rng.randf() < 0.4
-	var slope_cells: Array = [slope, slope - up_dir] if kind == 2 or gentle else [slope]
-	var approach: Vector2i = slope_cells.back() - up_dir
-	var claim: Array = [] if mound else slope_cells + [approach]
-	var footprint := rect.grow(2 if mound else 1)
-	for x in range(footprint.position.x, footprint.end.x):
-		for z in range(footprint.position.y, footprint.end.y):
-			claim.append(Vector2i(x, z))
-	for c in claim:
-		if reserved.has(c):
+## Empty grass at ground level, inside the map.
+func _is_open_ground(cell: Vector2i) -> bool:
+	if cell.x < 1 or cell.y < 1 or cell.x >= map_size.x - 1 or cell.y >= map_size.y - 1:
+		return false
+	var ground := ground_tile(cell)
+	if ground != Tile.GROUND and ground != Tile.FLOWERS:
+		return false
+	for layer in range(0, TOP_LAYER + 1):
+		if get_cell_item(Vector3i(cell.x, layer, cell.y)) != INVALID_CELL_ITEM:
 			return false
-
-	var block: Tile = Tile.HALF if half else Tile.FULL
-	var layers := 2 if kind == 2 else 1
-	for layer in layers:
-		for x in range(rect.position.x, rect.end.x):
-			for z in range(rect.position.y, rect.end.y):
-				set_cell_item(Vector3i(x, layer, z), block)
-
-	if mound:
-		_surround_with_slopes(rect, half)
-	else:
-		var stairs := rng.randf() < 0.5
-		if kind == 2:
-			var tile: Tile = Tile.STAIRS if stairs else Tile.RAMP
-			set_cell_item(Vector3i(slope.x, 0, slope.y), Tile.FULL)
-			set_slope(slope, 1, tile, up_dir)
-			set_slope(slope - up_dir, 0, tile, up_dir)
-			towers.append(rect)
-		elif gentle:
-			set_slope(slope, 0, Tile.UPPER_HALF_STAIRS if stairs else Tile.UPPER_HALF_RAMP, up_dir)
-			set_slope(slope - up_dir, 0, Tile.HALF_STAIRS if stairs else Tile.HALF_RAMP, up_dir)
-		elif half:
-			set_slope(slope, 0, Tile.HALF_STAIRS if stairs else Tile.HALF_RAMP, up_dir)
-		else:
-			set_slope(slope, 0, Tile.STAIRS if stairs else Tile.RAMP, up_dir)
-		# Cut no deeper than leaves the middle of every side (where the ramp lands) intact.
-		var max_cut := mini((size.x - 1) / 2, (size.y - 1) / 2)
-		if max_cut >= 1 and rng.randf() < 0.7:
-			var depth := rng.randi_range(maxi(1, max_cut - 1), max_cut)
-			_cut_corners(rect, layers, Tile.HALF_WEDGE if half else Tile.WEDGE, depth)
-			# Long diagonal edges on one-layer platforms may get a diagonal ramp.
-			if depth >= 2 and layers == 1 and rng.randf() < 0.9:
-				var corner: Dictionary = _rect_corners(rect)[rng.randi() % 4]
-				var i := depth / 2
-				var ramp_cell: Vector2i = corner.cell + Vector2i(i * corner.inward.x, (depth - 1 - i) * corner.inward.y)
-				set_corner(ramp_cell, 0, Tile.HALF_DIAG_RAMP if half else Tile.DIAG_RAMP, corner.inward)
-				approaches.append(ramp_cell - corner.inward)
-
-	for c in claim:
-		reserved[c] = true
-	approaches.append(approach)
 	return true
 
 
@@ -484,7 +708,7 @@ func _try_place_enclosure(rng: RandomNumberGenerator, reserved: Dictionary,
 	var footprint := rect.grow(1)
 	for x in range(footprint.position.x, footprint.end.x):
 		for z in range(footprint.position.y, footprint.end.y):
-			if reserved.has(Vector2i(x, z)):
+			if reserved.has(Vector2i(x, z)) or not _is_open_ground(Vector2i(x, z)):
 				return false
 
 	var door_dir: Vector2i = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT][rng.randi() % 4]
@@ -533,20 +757,6 @@ func _cut_corners(rect: Rect2i, layers: int, wedge: Tile, depth: int) -> void:
 						set_cell_item(Vector3i(cell.x, layer, cell.y), INVALID_CELL_ITEM)
 
 
-## Rings a platform with ramps rising toward it and outer corner slopes.
-func _surround_with_slopes(rect: Rect2i, half: bool) -> void:
-	var ramp := Tile.HALF_HILL_RAMP if half else Tile.HILL_RAMP
-	var ring := rect.grow(1)
-	for x in range(rect.position.x, rect.end.x):
-		set_slope(Vector2i(x, ring.position.y), 0, ramp, Vector2i.DOWN)
-		set_slope(Vector2i(x, ring.end.y - 1), 0, ramp, Vector2i.UP)
-	for z in range(rect.position.y, rect.end.y):
-		set_slope(Vector2i(ring.position.x, z), 0, ramp, Vector2i.RIGHT)
-		set_slope(Vector2i(ring.end.x - 1, z), 0, ramp, Vector2i.LEFT)
-	for corner in _rect_corners(ring):
-		set_corner(corner.cell, 0, Tile.HALF_CORNER_OUTER if half else Tile.CORNER_OUTER, corner.inward)
-
-
 ## The four corner cells of a rect, each with the diagonal pointing inward.
 static func _rect_corners(rect: Rect2i) -> Array:
 	var lo := rect.position
@@ -557,61 +767,6 @@ static func _rect_corners(rect: Rect2i) -> Array:
 		{ cell = Vector2i(lo.x, hi.y), inward = Vector2i(1, -1) },
 		{ cell = hi, inward = Vector2i(-1, -1) },
 	]
-
-
-## Spans bridges between pairs of towers that line up across open ground.
-## Decks sit at the top of layer 1, leaving headroom to walk underneath.
-func _place_bridges(rng: RandomNumberGenerator, towers: Array[Rect2i]) -> void:
-	if towers.size() < 2:
-		return
-	var linked := {}
-	var placed := 0
-	for attempt in bridge_count * 20:
-		if placed >= bridge_count:
-			return
-		var a := towers[rng.randi() % towers.size()]
-		var b := towers[rng.randi() % towers.size()]
-		if a == b or linked.has([a, b]):
-			continue
-		var span := _bridge_span(rng, a, b)
-		if span.is_empty():
-			continue
-		# Towers apart along x get a bridge running along x (railings on its sides).
-		var along := Vector2i.RIGHT if a.end.x <= b.position.x or b.end.x <= a.position.x else Vector2i.DOWN
-		for c in span:
-			set_slope(c, 1, Tile.BRIDGE, along)
-		linked[[a, b]] = true
-		linked[[b, a]] = true
-		placed += 1
-
-
-## Straight run of empty ground cells between two rects, or [] if none.
-func _bridge_span(rng: RandomNumberGenerator, a: Rect2i, b: Rect2i) -> Array:
-	for axis in [0, 1]:
-		var other: int = 1 - axis
-		var lo := maxi(a.position[other], b.position[other])
-		var hi := mini(a.end[other], b.end[other])
-		if lo >= hi:
-			continue
-		var first: Rect2i = a if a.position[axis] < b.position[axis] else b
-		var second: Rect2i = b if first == a else a
-		if first.end[axis] >= second.position[axis]:
-			continue
-		var line := rng.randi_range(lo, hi - 1)
-		var near_end: Vector2i = Vector2i(first.end[axis] - 1, line) if axis == 0 else Vector2i(line, first.end[axis] - 1)
-		var far_end: Vector2i = Vector2i(second.position[axis], line) if axis == 0 else Vector2i(line, second.position[axis])
-		if get_cell_item(Vector3i(near_end.x, 1, near_end.y)) != Tile.FULL \
-				or get_cell_item(Vector3i(far_end.x, 1, far_end.y)) != Tile.FULL:
-			return []
-		var span := []
-		for i in range(first.end[axis], second.position[axis]):
-			var c: Vector2i = Vector2i(i, line) if axis == 0 else Vector2i(line, i)
-			for layer in range(0, TOP_LAYER + 1):
-				if get_cell_item(Vector3i(c.x, layer, c.y)) != INVALID_CELL_ITEM:
-					return []
-			span.append(c)
-		return span
-	return []
 
 
 ## Places a sloped tile so that it rises toward up_dir.
@@ -928,6 +1083,7 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.PATH, "Path", full_box, { top = Tex.PATH, side = Tex.DIRT, slope = Tex.PATH }],
 		[Tile.FLOWERS, "Flowers", full_box, { top = Tex.FLOWERS, side = Tex.GRASS_SIDE, slope = Tex.GRASS }],
 		[Tile.FULL, "Full", full_box, grass_block],
+		[Tile.ROCK, "Rock", full_box, { top = Tex.DIRT, side = Tex.DIRT, slope = Tex.DIRT }],
 		[Tile.FULL_DIRT, "FullDirt", full_box, { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
 		[Tile.WEDGE_DIRT, "WedgeDirt", _wedge_faces(1.0), { top = Tex.GRASS, side = Tex.DIRT, slope = Tex.GRASS }],
 		[Tile.HALF, "Half", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(0.5, 0.5, 0.5)), grass_block],
