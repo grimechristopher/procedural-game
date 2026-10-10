@@ -179,8 +179,17 @@ def tilled_wet(px, ox, oy):
     soil(px, ox, oy, WET, WET_FURROW, WET_LIGHT)
 
 
+def farmland(px, ox, oy):
+    """Untilled soil: flat earth with a few clods."""
+    fill(px, ox, oy, SOIL)
+    for x, y in PEBBLES + [(8, 1), (14, 9)]:
+        put(px, ox, oy, x, y, SOIL_FURROW)
+        put(px, ox, oy, x + 1, y, SOIL_FURROW)
+        put(px, ox, oy, x, y - 1, SOIL_LIGHT)
+
+
 # Order matches GridWorld.Tex.
-TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet]
+TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), (255, 0, 255))
 pixels = img.load()

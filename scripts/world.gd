@@ -56,7 +56,7 @@ const TAGS := {
 
 ## Tiles in assets/tileset.png (see tools/make_tileset.py), left to right,
 ## top to bottom.
-enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET }
+enum Tex { GRASS, GRASS_SIDE, DIRT, PATH, FLOWERS, STONE, PLANKS, TILLED, TILLED_WET, SOIL }
 const TEX_COLS := 4
 const TEX_ROWS := 3
 
@@ -752,7 +752,7 @@ func _build_mesh_library() -> MeshLibrary:
 		[Tile.FENCE, "Fence", _fence_faces(), wood],
 		[Tile.FENCE_CORNER, "FenceCorner", _fence_faces() + _fence_faces(true), wood],
 		[Tile.PILLAR, "Pillar", _box_faces(Vector3(-0.5, 0, -0.5), Vector3(-0.3, 1, -0.3)), stone],
-		[Tile.FARMLAND, "Farmland", full_box, { top = Tex.DIRT, side = Tex.DIRT, slope = Tex.DIRT }],
+		[Tile.FARMLAND, "Farmland", full_box, { top = Tex.SOIL, side = Tex.DIRT, slope = Tex.SOIL }],
 		[Tile.TILLED, "Tilled", full_box, { top = Tex.TILLED, side = Tex.DIRT, slope = Tex.TILLED }],
 		[Tile.TILLED_WET, "TilledWet", full_box, { top = Tex.TILLED_WET, side = Tex.DIRT, slope = Tex.TILLED_WET }],
 		[Tile.SHIPPING_BIN, "ShippingBin", _box_faces(Vector3(-0.4, 0, -0.32), Vector3(0.4, 0.6, 0.32))
