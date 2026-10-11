@@ -164,9 +164,10 @@ const WALL_SLOPE := 0.95
 ## How far either side of a cell its slope is measured, so patches of
 ## cliffs come out whole rather than speckled.
 const STEEP_REACH := 2
-## Terrain.wall_lean above which full cliffs slope on every side, and above
-## which they slope on their east and west sides (which, standing vertical,
-## the camera sees edge on). Terraces a block at a time always slope.
+## Terrain.wall_lean above which walls taller than a block slope (as
+## staircases of banks) on every side, and above which they slope on their
+## east and west sides (which, standing vertical, the camera sees edge on).
+## Steps a block high always slope.
 const SLOPE_ALL := 0.15
 const SLOPE_SIDES := -0.2
 ## Highest ground, in blocks.
@@ -349,12 +350,6 @@ func is_cliffy_at(cell: Vector2i) -> bool:
 	return _max_drop[cell.y * map_size.x + cell.x] > 1
 
 
-## Whether a cell's full cliffs step back one at a time, as HGSS-style
-## banks, rather than stacking into vertical walls.
-func has_banks_at(cell: Vector2i) -> bool:
-	return _max_drop[cell.y * map_size.x + cell.x] == 2
-
-
 ## Lowers cells until none drops further to a side neighbour than its
 ## cliffs allow: a step on gentle ground, its stack of whole blocks on
 ## cliffy ground (which stays in whole blocks).
@@ -443,8 +438,8 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				_place_banks(Vector2i(x, z), heights)
 
 
-## Picks which full cliffs slope (see SLOPE_ALL) and builds the taller
-## ones into slopes: a staircase of one-block banks, one cell per block,
+## Picks which full cliffs slope (every step a block high; taller walls
+## where SLOPE_ALL says) and builds the taller ones into slopes: a staircase of one-block banks, one cell per block,
 ## stepping out over the ground in front where there's room for all of it
 ## (so the slope runs on at 45 degrees), its outside corners wrapping round.
 ## Where there isn't room the wall stays vertical.
@@ -457,12 +452,20 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 	for z in map_size.y:
 		for x in map_size.x:
 			var cell := Vector2i(x, z)
-			if heights[z * map_size.x + x] < 2 or not is_cliffy_at(cell) \
-					or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
+			var h := heights[z * map_size.x + x]
+			if h < 2 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
 			var lean := terrain.wall_lean(x, z)
 			for b in ORTHOGONAL.size():
-				if has_banks_at(cell) or lean > SLOPE_ALL or (ORTHOGONAL[b].x != 0 and lean > SLOPE_SIDES):
+				var d := ORTHOGONAL[b]
+				var hn := _height_at(heights, cell + d)
+				if hn < 0:
+					continue  # into water (or off the map): vertical
+				var drop := h - hn
+				# Rule: a step a block high always slopes, HGSS style; taller
+				# walls stand vertical unless the wall-style noise leans them.
+				if drop == 2 or (drop > 2 and drop % 2 == 0 and is_cliffy_at(cell) \
+						and (lean > SLOPE_ALL or (d.x != 0 and lean > SLOPE_SIDES))):
 					_slope_sides[z * map_size.x + x] |= 1 << b
 	# Grow the staircases a step at a time.
 	for step in 8:

@@ -23,7 +23,8 @@ blocks.
   cell at a cliff's foot, solid and not walkable, and the rock slopes down
   across it at 45 degrees. Taller walls slope as a staircase of banks, one
   cell per block, stepping out over the ground in front; their outside
-  corners wrap round.
+  corners wrap round. Where there isn't room in front, the wall stays
+  vertical.
 - A bank's slope is set by the heights at its cell's corners: each corner
   is as high as the tallest block touching it that stands exactly a block
   above the bank's floor, else the floor. Straight, corner, inside-corner,
@@ -31,13 +32,14 @@ blocks.
   closed down to the ground beside it. A plateau corner between two
   slopes is cut diagonally (a wedge, whose cut-off corner doesn't count),
   so the slope runs on along the diagonal; within a tall slope's staircase
-  too, at every level (not on natural terraces, whose shelves are walked). Where there isn't room in front, the wall stays
-  vertical.
-- Which sides slope: terraces a block at a time always do; elsewhere a
-  wall-style noise decides, sloping every side in some places and only
-  the east and west sides in more (vertical east/west walls are seen edge
-  on by the camera and read as thin lines). Half cliffs and cliffs into
-  water are always vertical.
+  too, at every level (not on natural terraces, whose shelves are walked).
+- Which sides slope (as in HGSS): every step a block high slopes, where
+  there's room for the bank in front. Taller walls stand vertical, unless a
+  wall-style noise leans them into staircases of banks (like contour lines
+  down a mountain side): on every side in some places, and on east and
+  west sides only in more (vertical east/west walls are seen edge on by
+  the camera and read as thin lines). Half cliffs and cliffs into water
+  are always vertical.
 - Plateaus' outside corners are cut **diagonally** (except where banks
   turn the corner themselves), and turned in a **slight curve** where they
   stay square.
