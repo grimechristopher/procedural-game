@@ -12,6 +12,13 @@ blocks.
   between cliffs stay about two cells wide or more instead of coming in
   rows of one-cell strips. Steeper ground stacks its cliffs two or three
   high.
+- **Faults**: in some regions the ground steps up two blocks along long
+  straight escarpments running diagonally, in bands. Their walls are full
+  height and vertical, cut diagonally all along (one long diagonal rock
+  face).
+- **The sea** round the map: a wandering shoreline, a strip of ground at
+  sea level along it, and the land rising gently inland (no rows of
+  terraces down to the water).
 - Half cliffs give way beside full cliffs: gentle ground next to cliffy
   ground rounds to whole blocks, so no half-block shelves get squeezed
   between full cliffs.
@@ -69,6 +76,8 @@ blocks.
 - Pockets are joined the gentlest way first (a ramp or clearing before a
   corridor), and each one joined counts as reachable straight away, so the
   pockets beside it join it instead of each cutting its own way in.
+- No ramp is laid within two cells to either side of another, so ramps
+  don't line up side by side like a comb.
 - Corridors never run alongside or across another ramp, and keep plateau
   two cells deep either side (one where that's all there is), so they
   don't leave thin walls standing.

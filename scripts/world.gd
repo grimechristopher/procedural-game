@@ -155,7 +155,13 @@ const NO_MOVE := -999
 const SETTLEMENT_RADIUS := 15.0
 const SETTLEMENT_BLEND := 8.0
 ## Cells over which the land falls away into ocean at the map's edge.
-const ISLAND_FALLOFF := 10.0
+const ISLAND_FALLOFF := 16.0
+## The sea round the map: water this far in from the edge (cells), the
+## shoreline wandering this far either way, then a strip of ground at sea
+## level this wide before the land rises (over ISLAND_FALLOFF).
+const COAST_WATER := 5.0
+const COAST_WOBBLE := 3.0
+const COAST_BEACH := 2.0
 ## Elevation slopes (blocks per cell) past which ground gets full cliffs:
 ## stepping back, then stacked two high, then three. Each keeps shelves
 ## between cliffs about two cells wide or more (half cliffs at a quarter
@@ -178,6 +184,8 @@ const MAX_HEIGHT := 10
 const ROCK_LEVEL := 5
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
 const RAMP_CHANCE := 0.03
+## Cells to either side of a ramp kept clear of other ramps.
+const RAMP_GAP := 2
 ## Unreachable pockets this small (cells) get levelled if no ramp fits
 ## (and up to twice this, once nothing else will join).
 const SMALL_POCKET := 30
@@ -284,8 +292,14 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 	for z in map_size.y:
 		for x in map_size.x:
 			var e := terrain.elevation(x, z)
-			var edge := minf(minf(x, map_size.x - 1 - x), minf(z, map_size.y - 1 - z)) / ISLAND_FALLOFF
-			e = lerpf(-2.0, e, smoothstep(0.0, 1.0, edge))
+			# The sea round the map: a wandering shoreline, a strip of ground
+			# at sea level along it, and the land rising gently inland.
+			var edge := minf(minf(x, map_size.x - 1 - x), minf(z, map_size.y - 1 - z)) \
+				+ terrain.coast_wobble(x, z) * COAST_WOBBLE
+			if edge < COAST_WATER:
+				e = -1.0
+			else:
+				e = lerpf(0.25, e, smoothstep(0.0, 1.0, (edge - COAST_WATER - COAST_BEACH) / ISLAND_FALLOFF))
 			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
 			elevation[z * map_size.x + x] = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
 	for z in map_size.y:
@@ -294,6 +308,9 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 			var tiers := _steep_tiers(elevation, Vector2i(x, z))
 			if terrain.is_cliffy(x, z):
 				tiers = maxi(tiers, terrain.cliff_tiers(x, z))
+			if terrain.near_fault(x, z):
+				# An escarpment: one wall, its full height.
+				tiers = maxi(tiers, int(Terrain.FAULT_HEIGHT))
 			_max_drop[i] = 2 * tiers if tiers > 0 else 1
 	for z in map_size.y:
 		for x in map_size.x:
@@ -468,6 +485,7 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 				# Rule: a step a block high always slopes, HGSS style; taller
 				# walls stand vertical unless the wall-style noise leans them.
 				if drop == 2 or (drop > 2 and drop % 2 == 0 and is_cliffy_at(cell) \
+						and not terrain.near_fault(x, z) \
 						and (lean > SLOPE_ALL or (d.x != 0 and lean > SLOPE_SIDES))):
 					_slope_sides[z * map_size.x + x] |= 1 << b
 	# Grow the staircases a step at a time.
@@ -698,6 +716,9 @@ func _ramp_room(cell: Vector2i, layer: int, h: int, reserved: Dictionary) -> boo
 
 ## Lays a ramp's pieces, rising toward dir; false if there are none.
 func _place_ramp(pieces: Array, dir: Vector2i, surface := []) -> bool:
+	for piece in pieces:
+		if _ramp_beside(piece[0], dir):
+			return false
 	for piece in pieces:
 		var c: Vector2i = piece[0]
 		set_slope(c, piece[2], piece[1], dir)
@@ -1099,8 +1120,11 @@ func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, sur
 	var landing: Vector2i = top + down * (steps + 1)
 	for j in range(k, steps):
 		var f: Vector2i = run[j]
-		if _height_at(heights, f) != floor_h or not _ramp_room(f, floor_h / 2, floor_h, reserved) \
-				or _ramp_near_cell(f):
+		if _height_at(heights, f) != floor_h or not _ramp_room(f, floor_h / 2, floor_h, reserved):
+			return false
+	# Clear of other ways up (no ramps side by side).
+	for f: Vector2i in run:
+		if _ramp_near(f) or _ramp_beside(f, down):
 			return false
 	if _height_at(heights, landing) != floor_h or surface[landing.y * map_size.x + landing.x].is_empty():
 		return false
@@ -1178,6 +1202,17 @@ func _ramp_near(cell: Vector2i) -> bool:
 			var item := get_cell_item(Vector3i(n.x, layer, n.y))
 			if item in HILL_RAMPS:
 				return true
+	return false
+
+
+## Whether another ramp runs within RAMP_GAP cells to either side of
+## cell (across dir, the way it climbs), so ramps don't line up side by
+## side like a comb.
+func _ramp_beside(cell: Vector2i, dir: Vector2i) -> bool:
+	var side := Vector2i(dir.y, dir.x)
+	for k in range(-RAMP_GAP, RAMP_GAP + 1):
+		if k != 0 and _ramp_near_cell(cell + side * k):
+			return true
 	return false
 
 
