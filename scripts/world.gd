@@ -164,6 +164,11 @@ const WALL_SLOPE := 0.95
 ## How far either side of a cell its slope is measured, so patches of
 ## cliffs come out whole rather than speckled.
 const STEEP_REACH := 2
+## Terrain.wall_lean above which full cliffs slope on every side, and above
+## which they slope on their east and west sides (which, standing vertical,
+## the camera sees edge on). Terraces a block at a time always slope.
+const SLOPE_ALL := 0.15
+const SLOPE_SIDES := -0.2
 ## Highest ground, in blocks.
 const MAX_HEIGHT := 10
 ## Ground this many blocks high or higher is bare rock.
@@ -188,6 +193,9 @@ var _edges: Node3D
 var height_map := PackedInt32Array()
 ## How deep the plateau beside a corridor must be (see _walled).
 var _corridor_walls := 2
+## Per cell, a bit per ORTHOGONAL side whose full cliff slopes (banks) rather
+## than standing vertical.
+var _slope_sides := PackedByteArray()
 ## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
 ## (Off for hand-built test maps, which have no terrain mesh.)
 @export var hide_terrain_blocks := true
@@ -220,6 +228,7 @@ func generate(new_seed: int) -> void:
 	spawn_cell = map_size / 2
 
 	var heights := _shape_heights(terrain)
+	_slope_walls(terrain, heights)
 	_build_terrain(terrain, heights)
 
 	var reserved := {}
@@ -421,7 +430,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
 			# Banks turn their own corners.
-			if not has_banks_at(cell):
+			if _slope_sides[z * map_size.x + x] == 0:
 				_wedge_corner(cell, heights)
 	for z in map_size.y:
 		for x in map_size.x:
@@ -429,8 +438,80 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				_maybe_ramp(Vector2i(x, z), heights)
 	for z in map_size.y:
 		for x in map_size.x:
-			if has_banks_at(Vector2i(x, z)):
+			if _slope_sides[z * map_size.x + x] != 0:
 				_place_banks(Vector2i(x, z), heights)
+
+
+## Picks which full cliffs slope (see SLOPE_ALL) and builds the taller
+## ones into slopes: a staircase of one-block banks, one cell per block,
+## stepping out over the ground in front where there's room for all of it
+## (so the slope runs on at 45 degrees), its outside corners wrapping round.
+## Where there isn't room the wall stays vertical.
+func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
+	_slope_sides.resize(map_size.x * map_size.y)
+	_slope_sides.fill(0)
+	var settled := SETTLEMENT_RADIUS + 2.0
+	for z in map_size.y:
+		for x in map_size.x:
+			var cell := Vector2i(x, z)
+			if heights[z * map_size.x + x] < 2 or not is_cliffy_at(cell) \
+					or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
+				continue
+			var lean := terrain.wall_lean(x, z)
+			for b in ORTHOGONAL.size():
+				if has_banks_at(cell) or lean > SLOPE_ALL or (ORTHOGONAL[b].x != 0 and lean > SLOPE_SIDES):
+					_slope_sides[z * map_size.x + x] |= 1 << b
+	# Grow the staircases a step at a time.
+	for step in 8:
+		var src := heights.duplicate()
+		var src_sides := _slope_sides.duplicate()
+		var changed := false
+		for z in map_size.y:
+			for x in map_size.x:
+				var cell := Vector2i(x, z)
+				var i := z * map_size.x + x
+				var f := src[i]
+				if f < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
+					continue
+				var best := f
+				var sides := 0
+				for b in ORTHOGONAL.size():
+					var d := ORTHOGONAL[b]
+					var top := _height_at(src, cell - d) - 2
+					if top <= f or (top - f) % 2 != 0 or not src_sides[(cell - d).y * map_size.x + (cell - d).x] & (1 << b):
+						continue
+					var room := true
+					for m in range(1, (top - f) / 2 + 1):
+						if _height_at(src, cell + d * m) != f:
+							room = false
+					if not room:
+						continue
+					if top > best:
+						best = top
+						sides = 0
+					if top == best:
+						sides |= 1 << b
+				for q in DIAGONAL:
+					# An outside corner between two slopes wraps round.
+					var a := Vector2i(q.x, 0)
+					var c := Vector2i(0, q.y)
+					var top := _height_at(src, cell - q) - 2
+					var bits := (1 << ORTHOGONAL.find(a)) | (1 << ORTHOGONAL.find(c))
+					if top <= f or (top - f) % 2 != 0 or src_sides[(cell - q).y * map_size.x + (cell - q).x] & bits != bits \
+							or _height_at(src, cell - a) < top or _height_at(src, cell - c) < top:
+						continue
+					if top > best:
+						best = top
+						sides = 0
+					if top == best:
+						sides |= bits
+				if best > f:
+					heights[i] = best
+					_slope_sides[i] = sides
+					_max_drop[i] = maxi(_max_drop[i], 2)
+					changed = true
+		if not changed:
+			break
 
 
 ## Turns a cell's one-block cliffs into HGSS-style banks: the face slopes
@@ -442,8 +523,10 @@ func _place_banks(cell: Vector2i, heights: PackedInt32Array) -> void:
 	if h < 2 or get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y)) not in [Tile.FULL, Tile.ROCK]:
 		return
 	var banked: Array[Vector2i] = []
-	for d in ORTHOGONAL:
-		if _bank_foot(cell + d, h - 2, heights):
+	var sides := _slope_sides[cell.y * map_size.x + cell.x]
+	for b in ORTHOGONAL.size():
+		var d := ORTHOGONAL[b]
+		if sides & (1 << b) and _bank_foot(cell + d, h - 2, heights):
 			set_cell_item(Vector3i(cell.x + d.x, (h - 2) / 2, cell.y + d.y), Tile.BANK)
 			banked.append(d)
 	for d in DIAGONAL:
@@ -858,6 +941,9 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 				set_cell_item(Vector3i(r.x, hr / 2, r.y), INVALID_CELL_ITEM)
 				surface[ri] = _top_surface(r)
 				return true
+		if cut and hr % 2 == 0 and get_cell_item(Vector3i(r.x, hr / 2, r.y)) == Tile.BANK \
+				and _ramp_through_slope(u, d, reached, surface, heights, reserved):
+			return true
 		if reached[ri] and hu != hr and absi(hu - hr) <= 2:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
@@ -880,6 +966,68 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 					surface[ri] = _top_surface(r)
 					return true
 	return false
+
+
+## Joins u to the ground at the other end of a slope (a staircase of
+## banks) starting beside it toward d, by laying a ramp down the slope at
+## half a block per cell: through the banks, then on over the ground at the
+## slope's foot. One end must be reachable.
+func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, surface: Array,
+		heights: PackedInt32Array, reserved: Dictionary) -> bool:
+	var hu := _height_at(heights, u)
+	var r := u + d
+	var hr := _height_at(heights, r)
+	# Walk the staircase to its far end, up or down.
+	var step := -2 if hu == hr + 2 else (2 if hu == hr else 0)
+	if step == 0:
+		return false
+	var banks: Array[Vector2i] = []
+	var c := r
+	while _height_at(heights, c) >= 0 and _has_bank(c, _height_at(heights, c)) and not reserved.has(c):
+		if not banks.is_empty() and _height_at(heights, c) != _height_at(heights, banks[-1]) + step:
+			break
+		banks.append(c)
+		c += d
+	if banks.is_empty():
+		return false
+	var k := banks.size()
+	# The ramp runs from the top, down the slope and out over the foot.
+	var top: Vector2i = u if step < 0 else c
+	var down: Vector2i = d if step < 0 else -d
+	var h_top := _height_at(heights, top)
+	if step > 0 and h_top != _height_at(heights, banks[-1]) + 2:
+		return false
+	var floor_h := h_top - 2 * k
+	var run: Array[Vector2i] = []
+	for j in range(1, 2 * k + 1):
+		run.append(top + down * j)
+	var landing: Vector2i = top + down * (2 * k + 1)
+	for j in range(k, 2 * k):
+		var f: Vector2i = run[j]
+		if _height_at(heights, f) != floor_h or not _ramp_room(f, floor_h / 2, floor_h, reserved) \
+				or _ramp_near_cell(f):
+			return false
+	if _height_at(heights, landing) != floor_h or surface[landing.y * map_size.x + landing.x].is_empty():
+		return false
+	if not reached[top.y * map_size.x + top.x] and not reached[landing.y * map_size.x + landing.x]:
+		return false
+	for j in 2 * k:
+		var f: Vector2i = run[j]
+		var s := h_top - (j + 1)
+		for layer in range(0, TOP_LAYER + 1):
+			set_cell_item(Vector3i(f.x, layer, f.y), INVALID_CELL_ITEM)
+		_stack_column(f, s)
+		heights[f.y * map_size.x + f.x] = s
+		set_slope(f, s / 2, Tile.HALF_HILL_RAMP if s % 2 == 0 else Tile.UPPER_HALF_HILL_RAMP, -down)
+	for j in range(-1, 2 * k + 2):
+		for side in [Vector2i(down.y, down.x), Vector2i(-down.y, -down.x), Vector2i.ZERO]:
+			var n: Vector2i = top + down * j + side
+			if _height_at(heights, n) < 0:
+				continue
+			if side != Vector2i.ZERO:
+				_unshape(n, heights)
+			surface[n.y * map_size.x + n.x] = _top_surface(n)
+	return true
 
 
 ## Climbs a wall of stacked cliffs from low toward dir by cutting a

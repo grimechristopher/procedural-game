@@ -18,9 +18,18 @@ blocks.
 - Full cliffs either **step back** one block at a time (terraces) or
   **stack** straight up into walls two or three blocks tall, as the noise
   decides.
-- Terraced full cliffs are **HGSS-style banks**: the face slopes down
-  across the whole cell at the cliff's foot, which can't be walked on.
-  Stacked walls, half cliffs and cliffs into water are **vertical**.
+- Full cliffs are either **sloped** (HGSS-style banks) or **vertical**,
+  chosen per side. A slope is built of **bank bricks**: a bank sits in the
+  cell at a cliff's foot, solid and not walkable, and the rock slopes down
+  across it at 45 degrees. Taller walls slope as a staircase of banks, one
+  cell per block, stepping out over the ground in front; their outside
+  corners wrap round. Where there isn't room in front, the wall stays
+  vertical.
+- Which sides slope: terraces a block at a time always do; elsewhere a
+  wall-style noise decides, sloping every side in some places and only
+  the east and west sides in more (vertical east/west walls are seen edge
+  on by the camera and read as thin lines). Half cliffs and cliffs into
+  water are always vertical.
 - Plateaus' outside corners are cut **diagonally** (except where banks
   turn the corner themselves), and turned in a **slight curve** where they
   stay square.
@@ -33,7 +42,8 @@ blocks.
   cliff over two. Nothing climbs a whole block in one cell.
 - Taller walls are climbed by a **corridor** of ramps cut back into the
   plateau, or a ramp **carved** into the cliff top where there's no room at
-  its foot. A ramp can take the place of a bank.
+  its foot. A ramp can take the place of a bank, and a slope of several
+  banks is climbed by a ramp laid down through it and on over its foot.
 - Every bit of land should be reachable; pockets that can't be joined are
   levelled into the ground beside them (up to 30 cells).
 - Pockets are joined the gentlest way first (a ramp or clearing before a
