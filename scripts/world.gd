@@ -181,7 +181,7 @@ const SLOPE_SIDES := -0.2
 ## Highest ground, in blocks.
 const MAX_HEIGHT := 10
 ## Ground this many blocks high or higher is bare rock.
-const ROCK_LEVEL := 5
+@export var rock_level := 5
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
 const RAMP_CHANCE := 0.03
 ## Cells to either side of a ramp kept clear of other ramps.
@@ -587,7 +587,7 @@ func _bank_foot(foot: Vector2i, foot_h: int, heights: PackedInt32Array) -> bool:
 func _stack_column(cell: Vector2i, h: int) -> void:
 	var blocks := h / 2
 	for layer in blocks:
-		var rock := layer == blocks - 1 and h % 2 == 0 and h >= ROCK_LEVEL * 2
+		var rock := layer == blocks - 1 and h % 2 == 0 and h >= rock_level * 2
 		set_cell_item(Vector3i(cell.x, layer, cell.y), Tile.ROCK if rock else Tile.FULL)
 	if h % 2 == 1:
 		set_cell_item(Vector3i(cell.x, blocks, cell.y), Tile.HALF)
@@ -630,6 +630,9 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 		# more slope rising behind it).
 		var behind := [_height_at(heights, cell - a), _height_at(heights, cell - b), _height_at(heights, cell - d)]
 		var within := sloped and _raised[cell.y * map_size.x + cell.x] == 1
+		# (On a slope, the cell diagonally behind may rise higher still.)
+		if sloped and behind[0] == h and behind[1] == h and behind[2] > h:
+			behind[2] = h
 		if behind.all(func(hb: int) -> bool: return hb == h or (within and hb > h)):
 			_wedge_column(cell, low, h, -d)
 			return
@@ -783,7 +786,7 @@ func _place_scenery(terrain: Terrain, heights: PackedInt32Array, reserved: Dicti
 			if roll < terrain.forest(x, z):
 				prop = Tile.TREE
 			elif roll > 0.985:
-				prop = Tile.BOULDER if h >= ROCK_LEVEL * 2 or roll > 0.993 else Tile.BUSH
+				prop = Tile.BOULDER if h >= rock_level * 2 or roll > 0.993 else Tile.BUSH
 			elif terrain.is_tall_grass(x, z):
 				prop = Tile.TALL_GRASS
 			if prop >= 0:

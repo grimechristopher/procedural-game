@@ -320,6 +320,13 @@ func _cell(c: Vector2i) -> void:
 	var joint: int = GridWorld.Tex.CLIFF_JOINT if _cliffy(c) else GridWorld.Tex.EARTH_JOINT
 	var tee: int = GridWorld.Tex.CLIFF_TEE if _cliffy(c) else GridWorld.Tex.EARTH_TEE
 	var top_tex := GridWorld.Tex.GRASS
+	if _slope_continues(c):
+		# Under a slope that carries on down another one, rock shows
+		# between the tips of its ribs, not grass.
+		for q in GridWorld.DIAGONAL:
+			faces.append(_quarter(c, q, top, GridWorld.Tex.DIRT, false, true))
+		_sides(c, raised)
+		return
 	if raised and _rocky(heights[i]):
 		# Bare rock on high ground, with rock (not grass) inside the band.
 		base = GridWorld.Tex.ROCK_EDGE
@@ -371,8 +378,8 @@ func _sides(c: Vector2i, raised: bool) -> void:
 			_face(a, b, o, solid[i], bottom, tex)
 
 ## Whether ground this high (in steps) is bare rock.
-static func _rocky(steps: int) -> bool:
-	return steps >= GridWorld.ROCK_LEVEL * 2
+func _rocky(steps: int) -> bool:
+	return steps >= world.rock_level * 2
 
 
 ## Whether c's cliff on side d is an HGSS-style bank: a block high, with a
@@ -419,6 +426,26 @@ func _add_lipped(quarter: Array, c: Vector2i, q: Vector2i) -> void:
 				sub_pts.append(v[0])
 				sub_uvs.append(v[1])
 			faces.append([sub_pts, Vector3.UP, quarter[2], sub_uvs])
+
+
+## Whether c holds a bank whose slope carries straight on down another
+## bank below it (a slope more than a block tall), and is all slope, no
+## flat part showing.
+func _slope_continues(c: Vector2i) -> bool:
+	if not _has_bank(c):
+		return false
+	var ys: Array = _bank_corners(c)[0]
+	var floor_y := _height(c) / 2.0
+	var at_floor := 0
+	for y in ys:
+		if y <= floor_y + 0.001:
+			at_floor += 1
+	if at_floor > 2:
+		return false
+	for d in GridWorld.ORTHOGONAL:
+		if _height(c + d) == _height(c) - 2 and _has_bank(c + d):
+			return true
+	return false
 
 
 ## Whether wedge c is cut between two slopes (so its slope runs on along

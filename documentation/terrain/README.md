@@ -35,6 +35,8 @@ blocks.
 - A bank's slope starts a little in from the cliff's edge, as in HGSS:
   the band along the top of the edge leans down into it (a soft lip), and
   the slope's top dips to meet it (diagonal slopes too).
+- Where a slope carries straight on down another (a slope more than a
+  block tall), rock, not grass, shows between the tips of its ribs.
 - A bank boxed in on three sides by ground a block above it is filled up
   level with that ground (no flat patches of slope in notches).
 - A bank's slope is set by the heights at its cell's corners: each corner
@@ -46,7 +48,9 @@ blocks.
   so the slope runs on along the diagonal; within a tall slope's staircase
   too, at every level (not on natural terraces, whose shelves are walked).
   Only on a 45-degree run of such corners: a shallower edge stays stepped,
-  its corners wrapped round, as HGSS draws it. Cuts the ground round them
+  its corners wrapped round, as HGSS draws it. (The cell diagonally behind
+  such a corner may rise higher, so a diagonal runs right up to a higher
+  slope.) Cuts the ground round them
   no longer fits (after joining) are squared off again.
 - Which sides slope (as in HGSS): every step a block high slopes, where
   there's room for the bank in front. Taller walls stand vertical, unless a
