@@ -34,7 +34,7 @@ blocks.
   vertical.
 - A bank's slope starts a little in from the cliff's edge, as in HGSS:
   the band along the top of the edge leans down into it (a soft lip), and
-  the slope's top dips to meet it.
+  the slope's top dips to meet it (diagonal slopes too).
 - A bank boxed in on three sides by ground a block above it is filled up
   level with that ground (no flat patches of slope in notches).
 - A bank's slope is set by the heights at its cell's corners: each corner
@@ -73,6 +73,9 @@ blocks.
   levelled to the reachable flat ground beside them nearest their height
   (up to 30 cells, or 60 once nothing else will join), so a small knob
   boxed in by tall walls comes down.
+- Banks the connector took away to climb a cliff go back afterwards
+  wherever nothing came of it (no ramp took their place and nothing
+  reached gets cut off), so slopes don't end on stray vertical steps.
 - Joins go gentlest first: a ramp or clearing, then a corridor or a ramp
   laid down through a slope (which may end in a step), then carving into
   a cliff top, and only last taking a bank away. A clearing (a tree, a
@@ -118,8 +121,8 @@ tileset's cliff set does:
 4. Otherwise it's plain ground.
 
 High ground (five blocks up and more) is bare rock: its pieces are the
-rock versions, with no grass in them, and slopes topping out there are
-rough boulders rather than strata.
+rock versions, with no grass in them (ramps too, without contour lines),
+and slopes topping out there are rough boulders rather than ribs.
 
 Ramps take part like any other cell, their pieces draped over the slope,
 with contour lines across the climb so the slope reads as one. Where the

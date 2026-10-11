@@ -211,6 +211,8 @@ var _slope_sides := PackedByteArray()
 ## Cells _slope_walls raised into a slope's staircase (all slope, no ground
 ## to walk on).
 var _raised := PackedByteArray()
+## Banks the connector took away this time round (see _restore_banks).
+var _peeled: Array[Vector2i] = []
 ## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
 ## (Off for hand-built test maps, which have no terrain mesh.)
 @export var hide_terrain_blocks := true
@@ -801,6 +803,7 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 	for z in map_size.y:
 		for x in map_size.x:
 			surface[z * map_size.x + x] = _top_surface(Vector2i(x, z))
+	_peeled.clear()
 	var level_limit := SMALL_POCKET
 	for attempt in 40:
 		if attempt == 30:
@@ -852,10 +855,86 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 				_grow_reach(surface, reached, cells)
 		if joined == 0:
 			if level_limit > SMALL_POCKET:
-				return
+				break
 			# Stuck (or nearly out of tries, above): level somewhat bigger
 			# pockets too, as a last resort.
 			level_limit = SMALL_POCKET * 2
+	_restore_banks(surface, heights)
+
+
+## Puts back the banks _join took away (to climb the cliff behind them)
+## where nothing came of it: no ramp took their place and every bit of
+## ground reached without them is still reached with them.
+func _restore_banks(surface: Array, heights: PackedInt32Array) -> void:
+	var before := _reach(surface, PackedByteArray(), spawn_cell)
+	var restored: Array[Vector2i] = []
+	for r in _peeled:
+		var h := _height_at(heights, r)
+		var pos := Vector3i(r.x, h / 2, r.y)
+		if h < 0 or h % 2 == 1 or get_cell_item(pos) != INVALID_CELL_ITEM or restored.has(r):
+			continue
+		for d in ORTHOGONAL:
+			if _height_at(heights, r + d) == h + 2:
+				set_cell_item(pos, Tile.BANK)
+				surface[r.y * map_size.x + r.x] = _top_surface(r)
+				restored.append(r)
+				break
+	# Take back those beside ground that got cut off: one per cut-off
+	# area each round (reopening one is often enough), until none is.
+	for round in 16:
+		if restored.is_empty():
+			return
+		# (Late on, every one beside a cut-off area, so nothing stays cut off.)
+		var careful := round < 8
+		var after := _reach(surface, PackedByteArray(), spawn_cell)
+		var area := {}
+		var undo: Array[Vector2i] = []
+		for r in restored:
+			for d in ORTHOGONAL:
+				var n := r + d
+				var i := n.y * map_size.x + n.x
+				if _height_at(heights, n) < 0 or not before[i] or after[i]:
+					continue
+				var key := _lost_area(n, before, after, area)
+				if not careful or not area.has(-key - 1):
+					area[-key - 1] = true
+					undo.append(r)
+				break
+		if undo.is_empty():
+			return
+		for r in undo:
+			var h := _height_at(heights, r)
+			set_cell_item(Vector3i(r.x, h / 2, r.y), INVALID_CELL_ITEM)
+			surface[r.y * map_size.x + r.x] = _top_surface(r)
+			restored.erase(r)
+
+
+## Labels the area of ground (reached before, not after) holding cell, by
+## its lowest cell index, caching labels in `area` (index -> label).
+func _lost_area(cell: Vector2i, before: PackedByteArray, after: PackedByteArray, area: Dictionary) -> int:
+	var start := cell.y * map_size.x + cell.x
+	if area.has(start):
+		return area[start]
+	var seen: Array[int] = [start]
+	var frontier: Array[Vector2i] = [cell]
+	var lowest := start
+	var visited := {start: true}
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_back()
+		for d in ORTHOGONAL:
+			var n := c + d
+			if n.x < 0 or n.y < 0 or n.x >= map_size.x or n.y >= map_size.y:
+				continue
+			var i := n.y * map_size.x + n.x
+			if visited.has(i) or not before[i] or after[i]:
+				continue
+			visited[i] = true
+			seen.append(i)
+			lowest = mini(lowest, i)
+			frontier.append(n)
+	for i in seen:
+		area[i] = lowest
+	return lowest
 
 
 ## The highest surface in a column (terrain has one per column), found
@@ -1066,6 +1145,7 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 				# cliff (which turns vertical there) and can climb it next time.
 				set_cell_item(Vector3i(r.x, hr / 2, r.y), INVALID_CELL_ITEM)
 				surface[ri] = _top_surface(r)
+				_peeled.append(r)
 				return true
 		if cut and hr % 2 == 0 and get_cell_item(Vector3i(r.x, hr / 2, r.y)) == Tile.BANK \
 				and _ramp_through_slope(u, d, reached, surface, heights, reserved):

@@ -421,6 +421,13 @@ func _add_lipped(quarter: Array, c: Vector2i, q: Vector2i) -> void:
 			faces.append([sub_pts, Vector3.UP, quarter[2], sub_uvs])
 
 
+## Whether wedge c is cut between two slopes (so its slope runs on along
+## the diagonal), rather than standing as a vertical diagonal face.
+func _sloped_wedge(c: Vector2i) -> bool:
+	var si := world._corner_dir(c, (_height(c) - 1) / 2)
+	return _has_bank(c - Vector2i(si.x, 0)) and _has_bank(c - Vector2i(0, si.y))
+
+
 ## Whether a raised cell n's corner at point p is lipped (see _add_lipped):
 ## one of n's sides meeting there is a bank.
 func _lip_at(n: Vector2i, p: Vector2) -> bool:
@@ -464,6 +471,7 @@ func _bank_corners(c: Vector2i) -> Array:
 				var sn := Vector2(world._corner_dir(n, (hb + 1) / 2))
 				if p.is_equal_approx(Vector2(n.x + 0.5, n.y + 0.5) - sn * 0.5):
 					continue
+				lipped = lipped or _sloped_wedge(n)
 			elif kn != Kind.BLOCK:
 				continue
 			y = maxf(y, (hb + 2) / 2.0)
@@ -648,10 +656,12 @@ func _wedge(c: Vector2i) -> void:
 	# Out to the face, which stands a hair past the diagonal.
 	var reach := -s.normalized() * FACE_OFFSET
 	faces.append([[_at(tri[0], top), _at(tri[1] + reach, top), _at(tri[2] + reach, top)], Vector3.UP, diag, tri_uvs])
-	if _has_bank(c - Vector2i(si.x, 0)) and _has_bank(c - Vector2i(0, si.y)):
+	if _sloped_wedge(c):
 		# Between two slopes: the slope runs on along the diagonal, down to
-		# the cut-off corner.
-		_slope_tri([_at(p0, top), _at(p1, top), _at(open_corner, bottom)], top, _slope_tex(_cliffy(c), top))
+		# the cut-off corner, starting a little in (its lip, as for banks).
+		var tex := _slope_tex(_cliffy(c), top)
+		_slope_tri([_at(p0, top - LIP), _at(p1, top - LIP), _at(open_corner, bottom)], top, tex)
+		_face(p0, p1, -s.normalized(), top, top - LIP, tex)
 		return
 	if low > 0:
 		faces.append([[_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)], Vector3.UP, top_tex,
@@ -675,6 +685,15 @@ func _ramp(c: Vector2i) -> void:
 	var cliffy := _cliffy(c)
 	var band: int = GridWorld.Tex.CLIFF_EDGE if cliffy else GridWorld.Tex.EARTH_EDGE
 	var joint: int = GridWorld.Tex.CLIFF_JOINT if cliffy else GridWorld.Tex.EARTH_JOINT
+	var tee: int = GridWorld.Tex.CLIFF_TEE if cliffy else GridWorld.Tex.EARTH_TEE
+	var ground: int = GridWorld.Tex.GRASS
+	# On bare-rock high ground, rock (no grass, no contour lines).
+	var rocky := _rocky(roundi((base + rise) * 2.0))
+	if rocky:
+		band = GridWorld.Tex.ROCK_EDGE
+		joint = GridWorld.Tex.ROCK_JOINT
+		tee = GridWorld.Tex.ROCK_TEE
+		ground = GridWorld.Tex.ROCK_TOP
 	# The slope, a quarter at a time, autotiled like any cliff top
 	# (rule: ramps take part in the autotiling) and draped over the slope.
 	var n: Vector3 = Vector3(-up.x * rise, 1.0, -up.y * rise).normalized()
@@ -683,11 +702,11 @@ func _ramp(c: Vector2i) -> void:
 		var piece: int = p[0]
 		var quarter: Array
 		if piece == Piece.CENTER:
-			quarter = _quarter(c, q, 0.0, GridWorld.Tex.GRASS, false, true)
+			quarter = _quarter(c, q, 0.0, ground, false, true)
 		elif piece == Piece.JOINT:
 			quarter = _quarter(c, q, 0.0, joint, false, false)
 		elif piece == Piece.TEE:
-			quarter = _quarter(c, q, 0.0, GridWorld.Tex.CLIFF_TEE if cliffy else GridWorld.Tex.EARTH_TEE, false, false)
+			quarter = _quarter(c, q, 0.0, tee, false, false)
 		else:
 			quarter = _quarter(c, q, 0.0, band + piece, p[1], false)
 		var pts := []
@@ -703,7 +722,7 @@ func _ramp(c: Vector2i) -> void:
 		quarter[0] = pts
 		quarter[1] = n
 		faces.append(quarter)
-		if piece in [Piece.CENTER, Piece.EDGE, Piece.OUTER]:
+		if piece in [Piece.CENTER, Piece.EDGE, Piece.OUTER] and not rocky:
 			_slope_lines(c, q, n)
 	# The cliff's face cut to the slope, down each exposed side.
 	var face_tex: int = GridWorld.Tex.DIRT if cliffy else GridWorld.Tex.EARTH_SIDE
