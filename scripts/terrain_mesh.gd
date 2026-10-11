@@ -42,6 +42,9 @@ const ARC_STEPS := 3
 ## above it. Faces stand this far out from the cell's edge, clear of the
 ## sides of the GridMap's ground blocks.
 const LIFT := 0.003
+## How far a bank's top edge dips below the ground above it (see
+## _add_lipped), in blocks.
+const LIP := 0.15
 ## Where a tapered band's outer edge is pulled in to (in tile units, from
 ## the tile's top-left): past the band, so it narrows to nothing.
 const TAPER_END := 10.5 / 16.0
@@ -329,16 +332,18 @@ func _cell(c: Vector2i) -> void:
 		if piece == Piece.OUTER and raised and _rounded(c, q):
 			_round_corner(c, q, top, base + Piece.OUTER)
 		elif piece == Piece.OUTER and raised:
-			faces.append(_quarter(c, q, top, base + Piece.OUTER, false, false))
+			_add_lipped(_quarter(c, q, top, base + Piece.OUTER, false, false), c, q)
 		elif piece == Piece.CENTER:
 			if raised:
 				faces.append(_quarter(c, q, top, top_tex, false, true))
 		elif piece == Piece.JOINT:
 			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), joint, false, false))
 		elif piece == Piece.TEE:
-			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), tee, false, false))
+			_add_lipped(_quarter(c, q, top + (0.0 if raised else LIFT), tee, false, false), c, q)
+		elif raised:
+			_add_lipped(_quarter(c, q, top, base + piece, p[1], false), c, q)
 		else:
-			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), base + piece, p[1], false))
+			faces.append(_quarter(c, q, top + LIFT, base + piece, p[1], false))
 	_sides(c, raised)
 
 ## The faces down a cell's exposed sides: a bank sloping across the cell
@@ -378,6 +383,52 @@ func _is_bank(c: Vector2i, d: Vector2i) -> bool:
 	return hn >= 0 and _height(c) - hn == 2 and world.get_cell_item(Vector3i(n.x, hn / 2, n.y)) == T.BANK
 
 
+## Rule: a bank's slope starts a little in from the cliff's edge, HGSS
+## style: the band along the top of the edge leans down into it, by LIP.
+## Adds a raised cell's quarter (as _quarter made it), with its outer band
+## tilted down along whichever of its sides are banks.
+func _add_lipped(quarter: Array, c: Vector2i, q: Vector2i) -> void:
+	var lip_x := _is_bank(c, Vector2i(q.x, 0))
+	var lip_z := _is_bank(c, Vector2i(0, q.y))
+	if not lip_x and not lip_z:
+		faces.append(quarter)
+		return
+	var pts: Array = quarter[0]
+	var uvs: Array = quarter[3]
+	# Bilinear over the quarter: s out toward the x side, t toward the z side.
+	var at := func(st: Vector2) -> Array:
+		var a: Vector3 = pts[0].lerp(pts[1], st.x)
+		var b: Vector3 = pts[3].lerp(pts[2], st.x)
+		var p: Vector3 = a.lerp(b, st.y)
+		var ua: Vector2 = uvs[0].lerp(uvs[1], st.x)
+		var ub: Vector2 = uvs[3].lerp(uvs[2], st.x)
+		if (lip_x and st.x >= 1.0) or (lip_z and st.y >= 1.0):
+			p.y -= LIP
+		return [p, ua.lerp(ub, st.y)]
+	var inner := 1.0 - BAND / 0.5
+	var ss := [0.0, inner, 1.0] if lip_x else [0.0, 1.0]
+	var ts := [0.0, inner, 1.0] if lip_z else [0.0, 1.0]
+	for i in ss.size() - 1:
+		for j in ts.size() - 1:
+			var corners := [Vector2(ss[i], ts[j]), Vector2(ss[i + 1], ts[j]),
+				Vector2(ss[i + 1], ts[j + 1]), Vector2(ss[i], ts[j + 1])]
+			var sub_pts := []
+			var sub_uvs := []
+			for st in corners:
+				var v: Array = at.call(st)
+				sub_pts.append(v[0])
+				sub_uvs.append(v[1])
+			faces.append([sub_pts, Vector3.UP, quarter[2], sub_uvs])
+
+
+## Whether a raised cell n's corner at point p is lipped (see _add_lipped):
+## one of n's sides meeting there is a bank.
+func _lip_at(n: Vector2i, p: Vector2) -> bool:
+	var sx := signi(roundi(p.x * 2.0) - (n.x * 2 + 1))
+	var sz := signi(roundi(p.y * 2.0) - (n.y * 2 + 1))
+	return _is_bank(n, Vector2i(sx, 0)) or _is_bank(n, Vector2i(0, sz))
+
+
 ## Whether c's quarter toward q is an outer corner turned in a curve (both
 ## its cliffs vertical).
 func _rounded(c: Vector2i, q: Vector2i) -> bool:
@@ -403,6 +454,7 @@ func _bank_corners(c: Vector2i) -> Array:
 	for k in CORNERS:
 		var p: Vector2 = Vector2(c) + k
 		var y := hb / 2.0
+		var lipped := false
 		for o in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
 			var n: Vector2i = Vector2i(p) + o
 			if n == c or _height(n) != hb + 2:
@@ -415,8 +467,10 @@ func _bank_corners(c: Vector2i) -> Array:
 			elif kn != Kind.BLOCK:
 				continue
 			y = maxf(y, (hb + 2) / 2.0)
+			lipped = lipped or (kn == Kind.BLOCK and _lip_at(n, p))
 			cliffy = cliffy or _cliffy(n)
-		out.append(y)
+		# (Dipped to meet a lipped edge above it, see _add_lipped.)
+		out.append(y - LIP if lipped and y > hb / 2.0 else y)
 	return [out, cliffy]
 
 ## The cell's corners, NW, NE, SE, SW, as offsets from its north-west corner.

@@ -501,22 +501,28 @@ def rock_top(px, ox, oy):
 
 def bank_rock(px, ox, oy):
     """The rock of an HGSS-style bank, a cliff face sloping across a whole
-    cell, top edge at row 0: fine strata running along the slope, wavering,
-    lit near the top and darkening toward the foot."""
-    wave = [0, 0, 1, 1, 0, 0, -1, -1, 0, 1, 1, 0, 0, 0, -1, 0]
-    for x in range(T):
-        for y in range(T):
-            k = (y - wave[x]) % 3
-            if y < 5:
-                c = [ROCK_LIGHT, ROCK, ROCK][k]
-            elif y < 11:
-                c = [ROCK, ROCK_MID, ROCK][k]
-            else:
-                c = [ROCK_MID, ROCK_DARK, ROCK_MID][k]
+    cell, top edge at row 0: rounded ribs of rock running down the slope,
+    wandering a little, lit on their left flanks and shaded on their right,
+    lighter near the lip and darker toward the foot, where they end in
+    jagged tips (see-through between, so the ground shows). Tiles across."""
+    import math
+    for y in range(T):
+        for x in range(T):
+            # Ridges across the tile (periodic in x so it tiles), drifting
+            # sideways a little down the slope.
+            u = (x + 0.6 * math.sin(y * 0.7)) / T * 2 * math.pi
+            ridge = 0.55 * math.sin(u * 3) + 0.3 * math.sin(u * 5 + 1.3) + 0.15 * math.sin(u * 2 + 0.4)
+            slope_side = 0.55 * math.cos(u * 3) * 3 + 0.3 * math.cos(u * 5 + 1.3) * 5
+            # Ridge crests reach further down at the foot.
+            tip = 12.5 + 2.5 * ridge
+            if y > tip:
+                put(px, ox, oy, x, y, CLEAR)
+                continue
+            light = 0.25 * slope_side / 2.0 + 0.35 * ridge - y / 16.0 * 0.9 + 0.35
+            if y < 2:
+                light += 0.35
+            c = ROCK_DARK if light < -0.35 else ROCK_MID if light < 0.0 else ROCK if light < 0.4 else ROCK_LIGHT
             put(px, ox, oy, x, y, c)
-    for x, y in [(3, 2), (10, 6), (6, 9), (13, 12), (1, 13)]:
-        put(px, ox, oy, x, y, ROCK_DARK)
-        put(px, ox, oy, x, y + 1, ROCK_DARK)
 
 
 # Boulders: the centres of rough chunks of rock; each pixel belongs to the

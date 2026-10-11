@@ -32,6 +32,11 @@ blocks.
   cell per block, stepping out over the ground in front; their outside
   corners wrap round. Where there isn't room in front, the wall stays
   vertical.
+- A bank's slope starts a little in from the cliff's edge, as in HGSS:
+  the band along the top of the edge leans down into it (a soft lip), and
+  the slope's top dips to meet it.
+- A bank boxed in on three sides by ground a block above it is filled up
+  level with that ground (no flat patches of slope in notches).
 - A bank's slope is set by the heights at its cell's corners: each corner
   is as high as the tallest block touching it that stands exactly a block
   above the bank's floor, else the floor. Straight, corner, inside-corner,

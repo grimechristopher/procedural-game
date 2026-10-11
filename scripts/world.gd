@@ -264,6 +264,7 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_smooth_fins(heights, reserved)
 	_connect_everything(heights, reserved)
+	_fill_bank_notches(heights, reserved)
 	_check_wedges(heights)
 	_bury_covered_blocks()
 	height_map = heights
@@ -630,6 +631,32 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 		if behind.all(func(hb: int) -> bool: return hb == h or (within and hb > h)):
 			_wedge_column(cell, low, h, -d)
 			return
+
+
+## Fills banks boxed in on three sides by ground a block above them (a
+## one-cell notch, which would be a flat patch of slope nobody can walk
+## on) up level with that ground. Safe after joining: a bank isn't walked
+## on, and the filled cell joins the ground round it.
+func _fill_bank_notches(heights: PackedInt32Array, reserved: Dictionary) -> void:
+	for z in range(1, map_size.y - 1):
+		for x in range(1, map_size.x - 1):
+			var c := Vector2i(x, z)
+			var h := _height_at(heights, c)
+			if h < 0 or reserved.has(c) or not _has_bank(c, h):
+				continue
+			var above := 0
+			for d in ORTHOGONAL:
+				if _height_at(heights, c + d) == h + 2 and not _ramp_near_cell(c + d):
+					above += 1
+			if above < 3:
+				continue
+			for layer in range(0, TOP_LAYER + 1):
+				set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+			_stack_column(c, h + 2)
+			heights[c.y * map_size.x + c.x] = h + 2
+			for n in ORTHOGONAL + DIAGONAL:
+				if _height_at(heights, c + n) >= 0:
+					_unshape(c + n, heights)
 
 
 ## Squares off diagonal cuts that no longer sit on a corner (the ground

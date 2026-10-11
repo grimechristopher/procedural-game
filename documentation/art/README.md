@@ -190,15 +190,11 @@ along the edge below a wavy grass fringe, and runs on down the face.
   brickwork.
 - `BANK_ROCK`: the rock of an HGSS-style bank, laid along the slope with
   its top edge (row 0) at the cliff's top and row 15 at the foot of the
-  cell in front: fine strata running along the slope, lit near the top
-  and darker toward the foot. Also used for bank corners and end caps.
-
-Ramps climb half a block per cell (about 27 degrees): a half cliff in one
-cell, a full cliff over two. They're drawn the same way: a grassy slope with the edge
-piece's band running down each exposed side and the face cut to the slope
-below it. Where the ground beside a ramp is level with its foot, the band
-narrows to nothing over the last quarter cell (the game pulls the piece
-in; nothing to draw).
+  cell in front: rounded ribs of rock running *down* the slope (not
+  strata across it), wandering a little, lit on their left flanks and
+  shaded on their right, lighter at the lip and darker toward the foot,
+  ending in jagged tips with see-through (magenta) between them so the
+  ground shows. Tiles across. Also used for bank corners.
 - `SLOPE_LINES`: contour lines laid over a ramp's grass so the slope reads
   as one: rows running across the climb, two per tile (a lit lip over a
   slightly darker line, wavering a pixel), see-through (magenta)
