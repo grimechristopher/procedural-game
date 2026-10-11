@@ -45,6 +45,10 @@ const LIFT := 0.003
 ## How far a bank's top edge dips below the ground above it (see
 ## _add_lipped), in blocks.
 const LIP := 0.15
+## How far a diagonal slope runs out from its top edge (half a cell's
+## diagonal), and the segments rounding its points.
+const DIAG_RUN := 0.7071
+const DIAG_ARC_STEPS := 4
 ## Segments in the curve round a slope's corner.
 const SLOPE_ARC_STEPS := 6
 ## Where a tapered band's outer edge is pulled in to (in tile units, from
@@ -578,6 +582,9 @@ func _bank_cell(c: Vector2i) -> void:
 				_round_bank(c, k, ys[k], others[0], top, tex)
 				tris = []
 				break
+			if ys[k] > others[0] and _round_diag_point(c, k, ys[k], others[0], top, tex):
+				tris = []
+				break
 			var through := k % 2 == 0
 			if ys[k] > others[0]:
 				through = not through
@@ -590,6 +597,56 @@ func _bank_cell(c: Vector2i) -> void:
 	for e in 4:
 		var d: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][e]
 		_bank_side(c, d, pts[e], pts[(e + 1) % 4], face_tex)
+
+
+## The outside point of a diagonal slope (as at the tips of a hill turned
+## 45 degrees), in bank cell c whose corner k (at y_k) touches the point:
+## the diagonal slope's plane on the side next to the cut, and a rounded
+## cone round the point on the other, so the tip reads round. False if c
+## isn't at such a point (the plain split does).
+func _round_diag_point(c: Vector2i, k: int, y_k: float, y_rest: float, top: float, tex: int) -> bool:
+	var apex: Vector2 = Vector2(c) + CORNERS[k]
+	var center := Vector2(c.x + 0.5, c.y + 0.5)
+	var plane_side := Vector2.ZERO
+	var round_side := Vector2.ZERO
+	for adj in [CORNERS[(k + 1) % 4], CORNERS[(k + 3) % 4]]:
+		var corner: Vector2 = Vector2(c) + adj
+		var mid := (apex + corner) / 2.0
+		var n := Vector2i((mid - center) * 2.0)
+		if _height(c + n) >= 0 and kind[(c + n).y * size.x + (c + n).x] == Kind.WEDGE:
+			plane_side = corner
+		else:
+			round_side = corner
+	if plane_side == Vector2.ZERO or round_side == Vector2.ZERO:
+		return false
+	_slope_tri([_at(apex, y_k), _at(plane_side, y_rest), _at(center, y_rest)], top, tex)
+	_fan(apex, y_k, _arc(apex, center - apex, round_side - apex, DIAG_RUN), y_rest, top, tex)
+	return true
+
+
+## Points round centre o, at radius r, turning from direction a to b.
+func _arc(o: Vector2, a: Vector2, b: Vector2, r: float) -> Array:
+	var a0 := a.angle()
+	var turn := wrapf(b.angle() - a0, -PI, PI)
+	var pts := []
+	for i in DIAG_ARC_STEPS + 1:
+		pts.append(o + Vector2.from_angle(a0 + turn * i / DIAG_ARC_STEPS) * r)
+	return pts
+
+
+## A fan of slope from apex (at y_apex) out to the rim points (at y_rim),
+## its ribs radiating from the apex.
+func _fan(apex: Vector2, y_apex: float, rim: Array, y_rim: float, top: float, tex: int) -> void:
+	var step := PI / 2.0 / DIAG_ARC_STEPS
+	for i in rim.size() - 1:
+		var tri := [_at(apex, y_apex), _at(rim[i], y_rim), _at(rim[i + 1], y_rim)]
+		faces.append([tri, _up_normal(tri), tex, [Vector2((i + 0.5) * step, top - y_apex),
+			Vector2(i * step, top - y_rim), Vector2((i + 1) * step, top - y_rim)]])
+
+
+func _up_normal(tri: Array) -> Vector3:
+	var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+	return -n if n.y < 0.0 else n
 
 
 ## A bank on a corner of a slope, turned in a curve: a quarter cone
@@ -775,8 +832,23 @@ func _wedge(c: Vector2i) -> void:
 		# Between two slopes: the slope runs on along the diagonal, down to
 		# the cut-off corner, starting a little in (its lip, as for banks).
 		var tex := _slope_tex(_cliffy(c), top)
-		_slope_tri([_at(p0, top - LIP), _at(p1, top - LIP), _at(open_corner, bottom)], top, tex)
 		_face(p0, p1, -s.normalized(), top, top - LIP, tex)
+		for t: Vector2i in [Vector2i(-si.x, 0), Vector2i(0, -si.y)]:
+			if _twin_cut(c + t, c):
+				# The inside point of a diagonal slope (a V): a rounded bowl
+				# down to the bottom corner it shares with its twin, the
+				# ground above carried on flat round the curve.
+				var tip: Vector2 = p0 if (p0 - center).dot(Vector2(t)) > 0.0 else p1
+				var far: Vector2 = p1 if tip == p0 else p0
+				_slope_tri([_at(far, top - LIP), _at(center, top - LIP), _at(open_corner, bottom)], top, tex)
+				var arc := _arc(open_corner, center - open_corner, tip - open_corner, DIAG_RUN)
+				_fan(open_corner, bottom, arc, top - LIP, top, tex)
+				var ground := GridWorld.Tex.ROCK_TOP if _rocky(h) else GridWorld.Tex.GRASS
+				for j in arc.size() - 1:
+					var cap := [_at(tip, top - LIP), _at(arc[j], top - LIP), _at(arc[j + 1], top - LIP)]
+					faces.append([cap, Vector3.UP, ground, [tip, arc[j], arc[j + 1]]])
+				return
+		_slope_tri([_at(p0, top - LIP), _at(p1, top - LIP), _at(open_corner, bottom)], top, tex)
 		return
 	if low > 0:
 		faces.append([[_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)], Vector3.UP, top_tex,

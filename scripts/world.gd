@@ -695,7 +695,8 @@ func _check_wedges(heights: PackedInt32Array) -> void:
 ## cut diagonally into it, mirror images, so the two diagonal slopes run on
 ## and meet in a point. Cell is one of them: lower by a block toward d and
 ## diagonally toward d + e, level toward e (its twin) and -e, and level
-## diagonally toward d - e (the diagonal edge's last cut).
+## diagonally toward d - e (the diagonal edge's last cut), the notch
+## exactly two cells wide.
 func _wedge_notch(cell: Vector2i, heights: PackedInt32Array, sloped: int) -> void:
 	var h := _height_at(heights, cell)
 	if h < 2 or sloped == 0 or _is_wedge(get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y))):
@@ -706,7 +707,7 @@ func _wedge_notch(cell: Vector2i, heights: PackedInt32Array, sloped: int) -> voi
 		for e: Vector2i in [Vector2i(d.y, d.x), Vector2i(-d.y, -d.x)]:
 			if _height_at(heights, cell + d + e) == h - 2 and _height_at(heights, cell + e) == h \
 					and _height_at(heights, cell - e) == h and _height_at(heights, cell + d - e) == h \
-					and _height_at(heights, cell + e + e) == h:
+					and _height_at(heights, cell + e + e) == h and _height_at(heights, cell + d + e + e) == h:
 				_wedge_column(cell, h - 2, h, -(d + e))
 				return
 
