@@ -68,7 +68,10 @@ tileset's cliff set does:
 High ground (five blocks up and more) is bare rock: its pieces are the
 rock versions, with no grass in them.
 
-Ramps take part like any other cell, their pieces draped over the slope.
+Ramps take part like any other cell, their pieces draped over the slope,
+with contour lines across the climb so the slope reads as one. Where the
+ground beside a ramp is level with its foot, the side's band narrows to
+nothing there, as the face under it does.
 Faces hang below every edge: vertical, a bank across the cell in front, or
 cut to a ramp's slope.
 

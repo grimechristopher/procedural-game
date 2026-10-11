@@ -519,6 +519,22 @@ def bank_rock(px, ox, oy):
         put(px, ox, oy, x, y + 1, ROCK_DARK)
 
 
+GRASS_SLOPE_LINE = (100, 133, 66)
+
+
+def slope_lines(px, ox, oy):
+    """Contour lines laid over a ramp's grass, rows running across the
+    climb, two per cell: a lit lip over a slightly darker line, wavering a
+    pixel so they read as grassy ground, not steps. See-through elsewhere."""
+    fill(px, ox, oy, CLEAR)
+    wave = [0, 0, 0, 1, 1, 1, 0, 0, 0, 0, -1, -1, 0, 0, 0, 0]
+    for line in (6, 14):
+        for x in range(T):
+            y = line + wave[x]
+            put(px, ox, oy, x, y, GRASS_LIGHT)
+            put(px, ox, oy, x, y + 1, GRASS_SLOPE_LINE)
+
+
 # Order matches GridWorld.Tex.
 TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_wet, farmland,
          thatch, shingle, plaster, window, door_top, door_bottom, fieldstone, embers,
@@ -527,7 +543,8 @@ TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_w
          grass_edge, grass_outer, grass_inner, rock_top,
          cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock,
          cliff_tee, earth_tee,
-         rock_edge, rock_outer, rock_inner, rock_joint, rock_tee, rock_diag]
+         rock_edge, rock_outer, rock_inner, rock_joint, rock_tee, rock_diag,
+         slope_lines]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()

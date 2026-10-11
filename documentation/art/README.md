@@ -189,7 +189,14 @@ along the edge below a wavy grass fringe, and runs on down the face.
 Ramps climb half a block per cell (about 27 degrees): a half cliff in one
 cell, a full cliff over two. They're drawn the same way: a grassy slope with the edge
 piece's band running down each exposed side and the face cut to the slope
-below it.
+below it. Where the ground beside a ramp is level with its foot, the band
+narrows to nothing over the last quarter cell (the game pulls the piece
+in; nothing to draw).
+- `SLOPE_LINES`: contour lines laid over a ramp's grass so the slope reads
+  as one: rows running across the climb, two per tile (a lit lip over a
+  slightly darker line, wavering a pixel), see-through (magenta)
+  elsewhere. Tiles seamlessly; the game turns it for ramps climbing east
+  or west and keeps it off the cliff bands.
 - `EARTH_SIDE`: the earth face of cliffs on gentle ground. A half cliff
   shows only its top 8 rows, so those make a complete face on their own;
   the bottom rows continue it for taller faces.

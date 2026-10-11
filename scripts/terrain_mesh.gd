@@ -42,6 +42,9 @@ const ARC_STEPS := 3
 ## above it. Faces stand this far out from the cell's edge, clear of the
 ## sides of the GridMap's ground blocks.
 const LIFT := 0.003
+## Where a tapered band's outer edge is pulled in to (in tile units, from
+## the tile's top-left): past the band, so it narrows to nothing.
+const TAPER_END := 10.5 / 16.0
 const FACE_OFFSET := 0.01
 const WATER_SURFACE := -0.25
 
@@ -546,12 +549,20 @@ func _ramp(c: Vector2i) -> void:
 		else:
 			quarter = _quarter(c, q, 0.0, band + piece, p[1], false)
 		var pts := []
-		for v in quarter[0]:
+		var taper := piece == Piece.EDGE and Vector2(q).dot(up) < 0.0 and _meets_ground(c, q)
+		for j in quarter[0].size():
+			var v: Vector3 = quarter[0][j]
 			var along: float = clampf((Vector2(v.x, v.z) - center).dot(up) + 0.5, 0.0, 1.0)
 			pts.append(Vector3(v.x, base + rise * along, v.z))
+			if taper and along < 0.01:
+				# Rule: a side's band runs out at the foot, where the face
+				# under it does: narrowed to nothing over the last quarter.
+				quarter[3][j].y = minf(quarter[3][j].y, TAPER_END)
 		quarter[0] = pts
 		quarter[1] = n
 		faces.append(quarter)
+		if piece in [Piece.CENTER, Piece.EDGE, Piece.OUTER]:
+			_slope_lines(c, q, n)
 	# The cliff's face cut to the slope, down each exposed side.
 	var face_tex: int = GridWorld.Tex.DIRT if cliffy else GridWorld.Tex.EARTH_SIDE
 	for side in [-1, 1]:
@@ -562,6 +573,37 @@ func _ramp(c: Vector2i) -> void:
 		var a: Vector2 = center - up * 0.5 + o * 0.5
 		var b: Vector2 = center + up * 0.5 + o * 0.5
 		_slanted_face(a, b, o, base, base + rise, floor_h, face_tex)
+
+
+## Whether the edge beside the foot quarter q of ramp c comes down to the
+## ground there (the ground beside is as high as the ramp's foot).
+func _meets_ground(c: Vector2i, q: Vector2i) -> bool:
+	var r: Dictionary = ramps[c]
+	var side := Vector2i(q.x, 0) if r.up.x == 0 else Vector2i(0, q.y)
+	return _is_exposed(c, side) and not exposed[c][side][1] \
+		and exposed[c][side][0] >= r.base - 0.001
+
+
+## Contour lines across a ramp's climb, laid over the quarter of c toward
+## q so the slope reads as one; short of any cliff band along its sides.
+func _slope_lines(c: Vector2i, q: Vector2i, n: Vector3) -> void:
+	var r: Dictionary = ramps[c]
+	var up := Vector2(r.up)
+	var center := Vector2(c.x + 0.5, c.y + 0.5)
+	var reach := Vector2(0.5, 0.5)
+	if _is_exposed(c, Vector2i(q.x, 0)):
+		reach.x -= BAND
+	if _is_exposed(c, Vector2i(0, q.y)):
+		reach.y -= BAND
+	var pts := []
+	var uvs := []
+	for k in [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]:
+		var p: Vector2 = center + Vector2(k.x * q.x * reach.x, k.y * q.y * reach.y)
+		var along: float = clampf((p - center).dot(up) + 0.5, 0.0, 1.0)
+		pts.append(Vector3(p.x, r.base + r.rise * along + LIFT, p.y))
+		# Tile rows run across the climb.
+		uvs.append(Vector2(p.y, p.x) if up.x != 0 else p)
+	faces.append([pts, n, GridWorld.Tex.SLOPE_LINES, uvs])
 
 
 ## A face below an edge that slopes from top_a at a to top_b at b, down to

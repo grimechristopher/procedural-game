@@ -125,6 +125,8 @@ enum Tex {
 	CLIFF_TEE, EARTH_TEE,
 	# The cliff-top pieces on bare-rock high ground: rock inside the band.
 	ROCK_EDGE, ROCK_OUTER, ROCK_INNER, ROCK_JOINT, ROCK_TEE, ROCK_DIAG,
+	# Contour lines laid over ramps, across the climb (see-through elsewhere).
+	SLOPE_LINES,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 11
