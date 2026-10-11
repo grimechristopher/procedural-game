@@ -172,12 +172,9 @@ const WALL_SLOPE := 0.95
 ## How far either side of a cell its slope is measured, so patches of
 ## cliffs come out whole rather than speckled.
 const STEEP_REACH := 2
-## Terrain.wall_lean above which walls taller than a block slope (as
-## staircases of banks) on every side, and above which they slope on their
-## east and west sides (which, standing vertical, the camera sees edge on).
-## Steps a block high always slope.
-const SLOPE_ALL := 0.15
-const SLOPE_SIDES := -0.2
+## Walls this many blocks tall or more stand vertical (a large cliff);
+## lower ones slope.
+const LARGE_CLIFF := 3
 ## Highest ground, in blocks.
 const MAX_HEIGHT := 10
 ## Ground this many blocks high or higher is bare rock.
@@ -466,8 +463,8 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				_place_banks(Vector2i(x, z), heights)
 
 
-## Picks which full cliffs slope (every step a block high; taller walls
-## where SLOPE_ALL says) and builds the taller ones into slopes: a staircase of one-block banks, one cell per block,
+## Picks which full cliffs slope (all of them, but for faults' walls and
+## large cliffs) and builds the taller ones into slopes: a staircase of one-block banks, one cell per block,
 ## stepping out over the ground in front where there's room for all of it
 ## (so the slope runs on at 45 degrees), its outside corners wrapping round.
 ## Where there isn't room the wall stays vertical.
@@ -483,18 +480,17 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 			var h := heights[z * map_size.x + x]
 			if h < 2 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
-			var lean := terrain.wall_lean(x, z)
 			for b in ORTHOGONAL.size():
 				var d := ORTHOGONAL[b]
 				var hn := _height_at(heights, cell + d)
 				if hn < 0:
 					continue  # into water (or off the map): vertical
 				var drop := h - hn
-				# Rule: a step a block high always slopes, HGSS style; taller
-				# walls stand vertical unless the wall-style noise leans them.
-				if drop == 2 or (drop > 2 and drop % 2 == 0 and is_cliffy_at(cell) \
-						and not terrain.near_fault(x, z) \
-						and (lean > SLOPE_ALL or (d.x != 0 and lean > SLOPE_SIDES))):
+				# Rule: slopes are the default, HGSS style. Walls stand
+				# vertical only for a reason: a fault's escarpment (lore), a
+				# large cliff, or no room in front for the slope (below).
+				if drop >= 2 and drop % 2 == 0 and drop < LARGE_CLIFF * 2 \
+						and not terrain.near_fault(x, z):
 					_slope_sides[z * map_size.x + x] |= 1 << b
 	# Grow the staircases a step at a time.
 	for step in 8:

@@ -52,13 +52,11 @@ blocks.
   such a corner may rise higher, so a diagonal runs right up to a higher
   slope.) Cuts the ground round them
   no longer fits (after joining) are squared off again.
-- Which sides slope (as in HGSS): every step a block high slopes, where
-  there's room for the bank in front. Taller walls stand vertical, unless a
-  wall-style noise leans them into staircases of banks (like contour lines
-  down a mountain side): on every side in some places, and on east and
-  west sides only in more (vertical east/west walls are seen edge on by
-  the camera and read as thin lines). Half cliffs and cliffs into water
-  are always vertical.
+- **Slopes are the default** (as in HGSS): every whole-block wall slopes,
+  as a staircase of banks if it's taller than a block. Walls stand
+  **vertical** only for a reason: a fault's escarpment (lore), a large
+  cliff (three blocks or more), or no room in front for the slope. Half
+  cliffs and cliffs into water are vertical for now.
 - Plateaus' outside corners are cut **diagonally** (except where banks
   turn the corner themselves), and turned in a **slight curve** where they
   stay square.

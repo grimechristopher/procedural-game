@@ -24,7 +24,6 @@ var _style := FastNoiseLite.new()
 var _forest := FastNoiseLite.new()
 var _tall_grass := FastNoiseLite.new()
 var _sheer := FastNoiseLite.new()
-var _lean := FastNoiseLite.new()
 var _coast := FastNoiseLite.new()
 var _faults := FastNoiseLite.new()
 
@@ -38,7 +37,6 @@ func _init(seed_value: int) -> void:
 	_setup(_forest, seed_value + 4, 0.06, 3)
 	_setup(_tall_grass, seed_value + 5, 0.1, 2)
 	_setup(_sheer, seed_value + 6, 0.03, 2)
-	_setup(_lean, seed_value + 7, 0.025, 2)
 	_setup(_coast, seed_value + 8, 0.05, 2)
 	_setup(_faults, seed_value + 9, 0.012, 2)
 
@@ -95,12 +93,6 @@ func cliff_tiers(x: float, z: float) -> int:
 ## a time (terraces). Stacked walls stay vertical.
 func has_banks(x: float, z: float) -> bool:
 	return is_cliffy(x, z) and cliff_tiers(x, z) == 1
-
-
-## How much full cliffs here lean back into slopes rather than standing
-## vertical, about -1..1 (see GridWorld for where it tips each way).
-func wall_lean(x: float, z: float) -> float:
-	return _lean.get_noise_2d(x, z)
 
 
 ## How far (in cells, about -1..1 times the amplitude a map uses) a
