@@ -86,6 +86,8 @@ var faces := []
 var kind := PackedInt32Array()
 var solid := PackedFloat32Array()
 var ramp_layer := PackedInt32Array()
+## Ramp cell -> { base, rise (blocks), up (Vector2i), tile }.
+var ramps := {}
 ## Cell -> exposed sides -> [bottom, water].
 var exposed := {}
 
@@ -156,7 +158,10 @@ func _find_exposed() -> void:
 			var c := Vector2i(x, z)
 			var i := z * size.x + x
 			var k := kind[i]
-			if k != Kind.BLOCK and k != Kind.GROUND and k != Kind.RAMP:
+			if k == Kind.RAMP:
+				_find_ramp_exposed(c)
+				continue
+			if k != Kind.BLOCK and k != Kind.GROUND:
 				continue
 			var top := solid[i]
 			var sides := {}
@@ -178,6 +183,54 @@ func _find_exposed() -> void:
 			if not sides.is_empty():
 				exposed[c] = sides
 
+## Rule: a ramp's sides are cliff edges wherever the ground beside them is
+## lower than the ramp's top, unless a matching ramp runs alongside (one
+## wide ramp). Its low end is an edge only if the ground in front drops
+## below it; its high end never is.
+func _find_ramp_exposed(c: Vector2i) -> void:
+	var i := c.y * size.x + c.x
+	var layer := ramp_layer[i]
+	var tile := world.get_cell_item(Vector3i(c.x, layer, c.y))
+	var up := world._up_dir(c, layer)
+	var base: float = layer + GridWorld._base(tile)
+	var rise: float = GridWorld._rise(tile)
+	ramps[c] = { base = base, rise = rise, up = up, tile = tile }
+	var sides := {}
+	for d in GridWorld.ORTHOGONAL:
+		var n := c + d
+		var hn := _height(n)
+		if hn == -99 or d == up:
+			continue
+		if hn < 0:
+			sides[d] = [WATER_SURFACE, true]
+			continue
+		if d == -up:
+			# (Not where the lower half of the same ramp leads into it.)
+			var below := world.get_cell_item(Vector3i(n.x, layer, n.y))
+			var continues := below in RAMPS and world._up_dir(n, layer) == up \
+				and is_equal_approx(layer + GridWorld._base(below) + GridWorld._rise(below), base)
+			if hn / 2.0 < base and not continues:
+				sides[d] = [hn / 2.0, false]
+			continue
+		if world.get_cell_item(Vector3i(n.x, layer, n.y)) == tile and world._up_dir(n, layer) == up:
+			continue
+		if hn / 2.0 < base + rise:
+			sides[d] = [hn / 2.0, false]
+	if not sides.is_empty():
+		exposed[c] = sides
+
+
+## Rule: n counts as level with c for corner pieces if it's as high, or
+## it's a ramp leading up onto c.
+func _level_with(n: Vector2i, c: Vector2i) -> bool:
+	if _height(n) == _height(c):
+		return true
+	if not ramps.has(n) and kind[n.y * size.x + n.x] == Kind.RAMP:
+		_find_ramp_exposed(n)
+	return ramps.has(n) and n + ramps[n].up == c \
+		and is_equal_approx(ramps[n].base + ramps[n].rise, _height(c) / 2.0)
+
+
 func _height(c: Vector2i) -> int:
 	if c.x < 0 or c.y < 0 or c.x >= size.x or c.y >= size.y:
 		return -99
@@ -197,9 +250,12 @@ func _piece(c: Vector2i, q: Vector2i) -> Array:
 		return [Piece.EDGE, false]
 	if side_x:
 		return [Piece.EDGE, true]
+	# Rule: an inside corner where both sides are level with c (a ramp up
+	# to c counts) and the diagonal drops away.
 	var h := _height(c)
 	var dh := _height(c + q)
-	if dh != -99 and dh < h and _height(c + Vector2i(q.x, 0)) == h and _height(c + Vector2i(0, q.y)) == h:
+	if dh != -99 and dh < h and kind[c.y * size.x + c.x] != Kind.RAMP \
+			and _level_with(c + Vector2i(q.x, 0), c) and _level_with(c + Vector2i(0, q.y), c):
 		return [Piece.JOINT if _diagonal_meets(c, q) else Piece.INNER, false]
 	return [Piece.CENTER, false]
 
@@ -431,49 +487,45 @@ func _wedge(c: Vector2i) -> void:
 ## lower, the cliff's face cut to the slope and its band running down the
 ## slope's edge.
 func _ramp(c: Vector2i) -> void:
-	var i := c.y * size.x + c.x
-	var layer := ramp_layer[i]
-	var tile := world.get_cell_item(Vector3i(c.x, layer, c.y))
-	var base: float = layer + GridWorld._base(tile)
-	var rise: float = GridWorld._rise(tile)
-	var up := Vector2(world._up_dir(c, layer))
+	var r: Dictionary = ramps[c]
+	var base: float = r.base
+	var rise: float = r.rise
+	var up := Vector2(r.up)
 	var center := Vector2(c.x + 0.5, c.y + 0.5)
 	var across := Vector2(-up.y, up.x)
-	# Corners: low left, low right, high right, high left.
-	var corners := [center - up * 0.5 - across * 0.5, center - up * 0.5 + across * 0.5,
-		center + up * 0.5 + across * 0.5, center + up * 0.5 - across * 0.5]
-	var y := [base, base, base + rise, base + rise]
-	var pts := []
-	for k in 4:
-		pts.append(_at(corners[k], y[k]))
-	var n: Vector3 = (pts[1] - pts[0]).cross(pts[3] - pts[0]).normalized()
-	faces.append([pts, n if n.y > 0.0 else -n, GridWorld.Tex.GRASS, _planar(pts)])
 	var cliffy := _cliffy(c)
+	var band: int = GridWorld.Tex.CLIFF_EDGE if cliffy else GridWorld.Tex.EARTH_EDGE
+	var joint: int = GridWorld.Tex.CLIFF_JOINT if cliffy else GridWorld.Tex.EARTH_JOINT
+	# The slope, a quarter at a time, autotiled like any cliff top
+	# (rule: ramps take part in the autotiling) and draped over the slope.
+	var n: Vector3 = Vector3(-up.x * rise, 1.0, -up.y * rise).normalized()
+	for q in GridWorld.DIAGONAL:
+		var p: Array = _piece(c, q)
+		var piece: int = p[0]
+		var quarter: Array
+		if piece == Piece.CENTER:
+			quarter = _quarter(c, q, 0.0, GridWorld.Tex.GRASS, false, true)
+		elif piece == Piece.JOINT:
+			quarter = _quarter(c, q, 0.0, joint, false, false)
+		else:
+			quarter = _quarter(c, q, 0.0, band + piece, p[1], false)
+		var pts := []
+		for v in quarter[0]:
+			var along: float = clampf((Vector2(v.x, v.z) - center).dot(up) + 0.5, 0.0, 1.0)
+			pts.append(Vector3(v.x, base + rise * along, v.z))
+		quarter[0] = pts
+		quarter[1] = n
+		faces.append(quarter)
+	# The cliff's face cut to the slope, down each exposed side.
 	var face_tex: int = GridWorld.Tex.DIRT if cliffy else GridWorld.Tex.EARTH_SIDE
-	var band_tex: int = GridWorld.Tex.CLIFF_EDGE if cliffy else GridWorld.Tex.EARTH_EDGE
 	for side in [-1, 1]:
 		var o: Vector2 = across * side
-		var nh := _height(c + Vector2i(o))
-		if nh == -99:
+		if not _is_exposed(c, Vector2i(o)):
 			continue
-		# A matching ramp alongside: one wide ramp, no edge between them.
-		var beside := c + Vector2i(o)
-		if world.get_cell_item(Vector3i(beside.x, layer, beside.y)) == tile and world._up_dir(beside, layer) == Vector2i(up):
-			continue
-		var floor_h := maxf(nh / 2.0, WATER_SURFACE if nh < 0 else 0.0)
-		if floor_h >= base + rise:
-			continue
-		# The side edge, low end to high end.
-		var a: Vector2 = corners[0] if side == -1 else corners[1]
-		var b: Vector2 = corners[3] if side == -1 else corners[2]
+		var floor_h: float = exposed[c][Vector2i(o)][0]
+		var a: Vector2 = center - up * 0.5 + o * 0.5
+		var b: Vector2 = center + up * 0.5 + o * 0.5
 		_slanted_face(a, b, o, base, base + rise, floor_h, face_tex)
-		# The band, on the slope along that edge.
-		var inner: Vector2 = -o * BAND
-		var lift := Vector3(0, LIFT, 0)
-		var u1 := a.distance_to(b)
-		faces.append([[_at(a + inner, base) + lift, _at(b + inner, base + rise) + lift,
-			_at(b, base + rise) + lift, _at(a, base) + lift], n if n.y > 0.0 else -n, band_tex,
-			[Vector2(0, 1.0 - BAND), Vector2(u1, 1.0 - BAND), Vector2(u1, 0.999), Vector2(0, 0.999)]])
 
 
 ## A face below an edge that slopes from top_a at a to top_b at b, down to
