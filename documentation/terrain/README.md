@@ -44,7 +44,11 @@ tileset's cliff set does:
      below it, and not where the lower half of the same ramp leads into
      it. Its high end never is.
 2. A quarter with **both** its sides on edges is an **outer corner**; with
-   **one**, an **edge**.
+   **one**, an **edge**. An outer corner is a **T-junction** instead if the
+   cliff along one of its sides carries on past the corner, one level
+   lower, along the neighbour on the other side (three heights meeting):
+   square, the side's band running into the continuing band, not a
+   free-standing rounded corner.
 3. With **neither**, it's an **inner corner** if the diagonal drops away
    and both sides are level with the cell. A ramp leading up onto the
    cell counts as level, and a side that's higher rules it out. If a

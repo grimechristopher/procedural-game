@@ -120,9 +120,12 @@ enum Tex {
 	CLIFF_DIAG, CLIFF_JOINT, EARTH_DIAG, EARTH_JOINT,
 	# The rock of an HGSS-style bank, sloping across a cell (see TerrainMesh).
 	BANK_ROCK,
+	# Square cliff-top corners where a cliff line carries on past an outside
+	# corner at a lower level (see TerrainMesh).
+	CLIFF_TEE, EARTH_TEE,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 9
+const TEX_ROWS := 10
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")

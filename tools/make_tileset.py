@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 9
+COLS, ROWS = 4, 10
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -395,6 +395,20 @@ def _diagonal_piece(px, ox, oy, kind, rim):
                 put(px, ox, oy, x, y, colors[max(dv, 0)])
 
 
+def _tee_piece(px, ox, oy, rim):
+    """A T-junction: the south-east quarter of a cliff top whose south and
+    east sides both drop away, where the cliff along the south carries on
+    past the corner at a lower level. Square, not rounded: the band along
+    the east side runs into the band along the south, which runs on."""
+    fill(px, ox, oy, GRASS)
+    colors = {0: rim[2], 1: rim[1], 2: rim[0], 3: GRASS_EDGE, 4: GRASS_DARK}
+    for y in range(8, T):
+        for x in range(8, T):
+            d = min(15 - x, 15 - y)
+            if d < 5:
+                put(px, ox, oy, x, y, colors[d])
+
+
 CLIFF_RIM = [ROCK_MID, ROCK, ROCK_LIGHT]
 EARTH_RIM = [ROCK, ROCK, ROCK_LIGHT]
 
@@ -405,6 +419,8 @@ def cliff_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", CLIFF_RIM)
 def earth_edge(px, ox, oy): _cliff_piece(px, ox, oy, "edge", EARTH_RIM)
 def earth_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", EARTH_RIM)
 def earth_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", EARTH_RIM)
+def cliff_tee(px, ox, oy): _tee_piece(px, ox, oy, CLIFF_RIM)
+def earth_tee(px, ox, oy): _tee_piece(px, ox, oy, EARTH_RIM)
 def cliff_diag(px, ox, oy): _diagonal_piece(px, ox, oy, "diag", CLIFF_RIM)
 def cliff_joint(px, ox, oy): _diagonal_piece(px, ox, oy, "joint", CLIFF_RIM)
 def earth_diag(px, ox, oy): _diagonal_piece(px, ox, oy, "diag", EARTH_RIM)
@@ -489,7 +505,8 @@ TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_w
          earth_side,
          cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner,
          grass_edge, grass_outer, grass_inner, rock_top,
-         cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock]
+         cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock,
+         cliff_tee, earth_tee]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()

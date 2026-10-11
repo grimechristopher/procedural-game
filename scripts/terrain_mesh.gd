@@ -58,7 +58,7 @@ const GRASS := [T.GROUND, T.FLOWERS]
 enum Kind { NONE, BLOCK, GROUND, WEDGE, RAMP }
 
 ## Autotile pieces, in the order of their tiles after the edge piece.
-enum Piece { EDGE, OUTER, INNER, CENTER, JOINT }
+enum Piece { EDGE, OUTER, INNER, CENTER, JOINT, TEE }
 
 
 ## A node holding the terrain's meshes for the world's current heights.
@@ -245,6 +245,14 @@ func _piece(c: Vector2i, q: Vector2i) -> Array:
 	var side_x := _is_exposed(c, Vector2i(q.x, 0))
 	var side_z := _is_exposed(c, Vector2i(0, q.y))
 	if side_x and side_z:
+		# Rule: if the cliff along one side carries on past the corner (one
+		# level lower, along the neighbour on the other side), it's a
+		# T-junction: square, not a free-standing rounded corner.
+		var nx := c + Vector2i(q.x, 0)
+		var nz := c + Vector2i(0, q.y)
+		if (_is_exposed(nx, Vector2i(0, q.y)) and _height(nx) >= 0) \
+				or (_is_exposed(nz, Vector2i(q.x, 0)) and _height(nz) >= 0):
+			return [Piece.TEE, false]
 		return [Piece.OUTER, false]
 	if side_z:
 		return [Piece.EDGE, false]
@@ -287,6 +295,7 @@ func _cell(c: Vector2i) -> void:
 	var top := solid[i]
 	var base: int = GridWorld.Tex.CLIFF_EDGE if _cliffy(c) else GridWorld.Tex.EARTH_EDGE
 	var joint: int = GridWorld.Tex.CLIFF_JOINT if _cliffy(c) else GridWorld.Tex.EARTH_JOINT
+	var tee: int = GridWorld.Tex.CLIFF_TEE if _cliffy(c) else GridWorld.Tex.EARTH_TEE
 	var top_tex: int = GridWorld.Tex.ROCK_TOP if world.get_cell_item(Vector3i(c.x, (heights[i] - 1) / 2, c.y)) == T.ROCK \
 		else GridWorld.Tex.GRASS
 	for q in GridWorld.DIAGONAL:
@@ -303,6 +312,8 @@ func _cell(c: Vector2i) -> void:
 				faces.append(_quarter(c, q, top, top_tex, false, true))
 		elif piece == Piece.JOINT:
 			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), joint, false, false))
+		elif piece == Piece.TEE:
+			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), tee, false, false))
 		else:
 			faces.append(_quarter(c, q, top + (0.0 if raised else LIFT), base + piece, p[1], false))
 	_sides(c, raised)
@@ -507,6 +518,8 @@ func _ramp(c: Vector2i) -> void:
 			quarter = _quarter(c, q, 0.0, GridWorld.Tex.GRASS, false, true)
 		elif piece == Piece.JOINT:
 			quarter = _quarter(c, q, 0.0, joint, false, false)
+		elif piece == Piece.TEE:
+			quarter = _quarter(c, q, 0.0, GridWorld.Tex.CLIFF_TEE if cliffy else GridWorld.Tex.EARTH_TEE, false, false)
 		else:
 			quarter = _quarter(c, q, 0.0, band + piece, p[1], false)
 		var pts := []
