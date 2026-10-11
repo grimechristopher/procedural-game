@@ -477,7 +477,17 @@ func _slope_continues(c: Vector2i) -> bool:
 ## the diagonal), rather than standing as a vertical diagonal face.
 func _sloped_wedge(c: Vector2i) -> bool:
 	var si := world._corner_dir(c, (_height(c) - 1) / 2)
-	return _has_bank(c - Vector2i(si.x, 0)) and _has_bank(c - Vector2i(0, si.y))
+	var a := c - Vector2i(si.x, 0)
+	var b := c - Vector2i(0, si.y)
+	# (At the inside point of a diagonal slope, one side is its twin cut.)
+	return (_has_bank(a) or _twin_cut(a, c)) and (_has_bank(b) or _twin_cut(b, c)) \
+		and (_has_bank(a) or _has_bank(b))
+
+
+## Whether n is a diagonal cut beside wedge c at the same height, the
+## other half of a V at the inside point of a diagonal slope.
+func _twin_cut(n: Vector2i, c: Vector2i) -> bool:
+	return _height(n) == _height(c) and kind[n.y * size.x + n.x] == Kind.WEDGE
 
 
 ## Whether a raised cell n's corner at point p is lipped (see _add_lipped):
@@ -736,7 +746,7 @@ func _wedge(c: Vector2i) -> void:
 	var si := world._corner_dir(c, top_layer)
 	var s := Vector2(si)
 	var center := Vector2(c.x + 0.5, c.y + 0.5)
-	var low := maxi(heights[c.y * size.x + c.x - si.x], 0)
+	var low := maxi(mini(heights[c.y * size.x + c.x - si.x], heights[(c.y - si.y) * size.x + c.x]), 0)
 	var top := h / 2.0
 	var bottom := low / 2.0
 	var p0 := center + Vector2(s.x, -s.y) * 0.5

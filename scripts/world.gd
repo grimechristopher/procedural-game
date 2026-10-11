@@ -453,6 +453,11 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 			_wedge_corner(cell, heights, _slope_sides[z * map_size.x + x])
 	for z in map_size.y:
 		for x in map_size.x:
+			var cell := Vector2i(x, z)
+			if heights[z * map_size.x + x] >= 0 and Vector2(cell).distance_to(Vector2(spawn_cell)) >= settled:
+				_wedge_notch(cell, heights, _slope_sides[z * map_size.x + x])
+	for z in map_size.y:
+		for x in map_size.x:
 			if heights[z * map_size.x + x] >= 0:
 				_maybe_ramp(Vector2i(x, z), heights)
 	for z in map_size.y:
@@ -682,6 +687,28 @@ func _check_wedges(heights: PackedInt32Array) -> void:
 			var corner := _height_at(heights, cell - s)
 			if low_a < 0 or low_a >= h or low_b != low_a or corner < 0 or corner > low_a:
 				_unshape(cell, heights)
+
+
+## The inside point of a diagonal slope (a V, as at the points of a hole
+## turned 45 degrees): where the lower ground pushes a two-cell notch up
+## between two diagonal edges, the two cells at the head of the notch are
+## cut diagonally into it, mirror images, so the two diagonal slopes run on
+## and meet in a point. Cell is one of them: lower by a block toward d and
+## diagonally toward d + e, level toward e (its twin) and -e, and level
+## diagonally toward d - e (the diagonal edge's last cut).
+func _wedge_notch(cell: Vector2i, heights: PackedInt32Array, sloped: int) -> void:
+	var h := _height_at(heights, cell)
+	if h < 2 or sloped == 0 or _is_wedge(get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y))):
+		return
+	for d in ORTHOGONAL:
+		if _height_at(heights, cell + d) != h - 2:
+			continue
+		for e: Vector2i in [Vector2i(d.y, d.x), Vector2i(-d.y, -d.x)]:
+			if _height_at(heights, cell + d + e) == h - 2 and _height_at(heights, cell + e) == h \
+					and _height_at(heights, cell - e) == h and _height_at(heights, cell + d - e) == h \
+					and _height_at(heights, cell + e + e) == h:
+				_wedge_column(cell, h - 2, h, -(d + e))
+				return
 
 
 ## Swaps the blocks of a column between heights low and high (in steps)
