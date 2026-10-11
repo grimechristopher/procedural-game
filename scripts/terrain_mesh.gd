@@ -116,6 +116,8 @@ func run() -> void:
 					_sides(c, false)
 			if kind[z * size.x + x] == Kind.GROUND:
 				_ground_overlay(c)
+			if _has_bank(c):
+				_bank_cell(c)
 
 # --- What's where ---------------------------------------------------------
 
@@ -209,9 +211,13 @@ func _find_ramp_exposed(c: Vector2i) -> void:
 			continue
 		if d == -up:
 			# (Not where the lower half of the same ramp leads into it.)
-			var below := world.get_cell_item(Vector3i(n.x, layer, n.y))
-			var continues := below in RAMPS and world._up_dir(n, layer) == up \
-				and is_equal_approx(layer + GridWorld._base(below) + GridWorld._rise(below), base)
+			# (The ramp below may sit a block lower, on a longer run.)
+			var continues := false
+			for l in [layer, layer - 1]:
+				var below := world.get_cell_item(Vector3i(n.x, l, n.y))
+				if below in RAMPS and world._up_dir(n, l) == up \
+						and is_equal_approx(l + GridWorld._base(below) + GridWorld._rise(below), base):
+					continues = true
 			if hn / 2.0 < base and not continues:
 				sides[d] = [hn / 2.0, false]
 			continue
@@ -324,8 +330,6 @@ func _cell(c: Vector2i) -> void:
 			_round_corner(c, q, top, base + Piece.OUTER)
 		elif piece == Piece.OUTER and raised:
 			faces.append(_quarter(c, q, top, base + Piece.OUTER, false, false))
-			if _is_bank(c, Vector2i(q.x, 0)) and _is_bank(c, Vector2i(0, q.y)):
-				_bank_corner(c, q, top)
 		elif piece == Piece.CENTER:
 			if raised:
 				faces.append(_quarter(c, q, top, top_tex, false, true))
@@ -352,11 +356,7 @@ func _sides(c: Vector2i, raised: bool) -> void:
 		var t := Vector2(-d.y, d.x)
 		var mid := center + o * 0.5
 		if raised and _is_bank(c, d):
-			var bank_tex: int = GridWorld.Tex.BANK_ROCK if _cliffy(c) else tex
-			_bank(mid - t * 0.5, mid + t * 0.5, o, solid[i], bottom, bank_tex)
-			for end in [-1, 1]:
-				_bank_end(c, d, Vector2i(t) * end, solid[i], bottom, bank_tex)
-			continue
+			continue  # the bank below draws the slope (_bank_cell)
 		for half in [-1, 1]:
 			var q := Vector2i(d) + Vector2i(t * half)
 			if raised and _rounded(c, q):
@@ -385,49 +385,124 @@ func _rounded(c: Vector2i, q: Vector2i) -> bool:
 		and not _is_bank(c, Vector2i(0, q.y))
 
 
-## A bank: the cliff's face sloping from the top edge a..b, facing o, down
-## across the whole cell below to its far edge.
-func _bank(a: Vector2, b: Vector2, o: Vector2, top: float, bottom: float, tex: int) -> void:
-	var pts := [_at(a, top), _at(b, top), _at(b + o, bottom), _at(a + o, bottom)]
-	var u0 := _along(a, o)
-	var u1 := _along(b, o)
-	var n: Vector3 = (Vector3(o.x, 0, o.y) * (top - bottom) + Vector3.UP).normalized()
-	faces.append([pts, n, tex, [Vector2(u0, 0), Vector2(u1, 0), Vector2(u1, top - bottom), Vector2(u0, top - bottom)]])
+func _has_bank(c: Vector2i) -> bool:
+	var h := _height(c)
+	return h >= 0 and world.get_cell_item(Vector3i(c.x, h / 2, c.y)) == T.BANK
 
 
-## Closes the end of c's bank on side d toward along, unless the bank
-## carries on there (into the next cell's bank, or round an outer corner):
-## a triangle under the end of the slope.
-func _bank_end(c: Vector2i, d: Vector2i, along: Vector2i, top: float, bottom: float, tex: int) -> void:
-	var next := c + along
-	if _height(next) > _height(c) or (_height(next) == _height(c) and _is_bank(next, d)):
-		return  # into a wall, or the bank carries on
-	if _is_bank(c, along):
-		return  # the corner piece wraps round
-	var e := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(d) * 0.5 + Vector2(along) * 0.5
-	var pts := [_at(e, top), _at(e + Vector2(d), bottom), _at(e, bottom)]
-	faces.append([pts, Vector3(along.x, 0, along.y), tex,
-		[Vector2(0, 0), Vector2(1, top - bottom), Vector2(0, top - bottom)]])
+## Rule: a bank's slope is set by the heights at its cell's corners. Each
+## corner is as high as the tallest block touching it that stands exactly
+## a block above the bank's floor (a wedge's cut-off corner doesn't
+## count), else the floor. So straight, corner, diagonal and stacked slopes
+## all meet without seams. Returns [heights NW, NE, SE, SW], and whether
+## the rock is a cliff's (not earth).
+func _bank_corners(c: Vector2i) -> Array:
+	var hb := _height(c)
+	var out := []
+	var cliffy := _cliffy(c)
+	for k in CORNERS:
+		var p: Vector2 = Vector2(c) + k
+		var y := hb / 2.0
+		for o in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+			var n: Vector2i = Vector2i(p) + o
+			if n == c or _height(n) != hb + 2:
+				continue
+			var kn := kind[n.y * size.x + n.x]
+			if kn == Kind.WEDGE:
+				var sn := Vector2(world._corner_dir(n, (hb + 1) / 2))
+				if p.is_equal_approx(Vector2(n.x + 0.5, n.y + 0.5) - sn * 0.5):
+					continue
+			elif kn != Kind.BLOCK:
+				continue
+			y = maxf(y, (hb + 2) / 2.0)
+			cliffy = cliffy or _cliffy(n)
+		out.append(y)
+	return [out, cliffy]
+
+## The cell's corners, NW, NE, SE, SW, as offsets from its north-west corner.
+const CORNERS := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
 
 
-## Where two banks meet at an outer corner: the slope wrapping round the
-## corner, across the diagonal cell, from the corner's top down to that
-## cell's far edges.
-func _bank_corner(c: Vector2i, q: Vector2i, top: float) -> void:
-	var bottom := (_height(c) - 2) / 2.0
-	var tex: int = GridWorld.Tex.BANK_ROCK if _cliffy(c) else GridWorld.Tex.EARTH_SIDE
-	var p := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(q) * 0.5
-	var ends := [p + Vector2(q.x, 0), p + Vector2(q), p + Vector2(0, q.y)]
-	# Strata ring the corner: down the slope from the corner's top to the
-	# far edges, along them round it.
-	var drop := top - bottom
-	for k in 2:
-		var e0: Vector2 = ends[k]
-		var e1: Vector2 = ends[k + 1]
-		var pts := [_at(p, top), _at(e0, bottom), _at(e1, bottom)]
-		var n: Vector3 = (pts[1] - pts[0]).cross(pts[2] - pts[0]).normalized()
-		faces.append([pts, n if n.y > 0.0 else -n, tex,
-			[Vector2(k + 0.5, 0), Vector2(k, drop), Vector2(k + 1, drop)]])
+## A bank's slope from its corner heights, split along the diagonal that
+## keeps it lowest (so an outside corner is a facet and an inside one a
+## valley), and its ends closed down to lower ground beside it.
+func _bank_cell(c: Vector2i) -> void:
+	var r: Array = _bank_corners(c)
+	var ys: Array = r[0]
+	var floor_y := _height(c) / 2.0
+	var tex: int = GridWorld.Tex.BANK_ROCK if r[1] else GridWorld.Tex.EARTH_SIDE
+	var face_tex: int = GridWorld.Tex.DIRT if r[1] else GridWorld.Tex.EARTH_SIDE
+	var top: float = ys.max()
+	if top <= floor_y:
+		return
+	var pts := []
+	for k in 4:
+		pts.append(Vector3(c.x + CORNERS[k].x, ys[k], c.y + CORNERS[k].y))
+	var tris: Array
+	if ys[0] + ys[2] <= ys[1] + ys[3]:
+		tris = [[0, 1, 2], [0, 2, 3]]
+	else:
+		tris = [[0, 1, 3], [1, 2, 3]]
+	for t in tris:
+		var tri := [pts[t[0]], pts[t[1]], pts[t[2]]]
+		if tri[0].y <= floor_y and tri[1].y <= floor_y and tri[2].y <= floor_y:
+			continue  # flat at the floor: the cell's own top shows
+		_slope_tri(tri, top, tex)
+	for e in 4:
+		var d: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][e]
+		_bank_side(c, d, pts[e], pts[(e + 1) % 4], face_tex)
+
+
+## A sloped triangle of rock, its strata running along the slope's level
+## lines and starting from the slope's top.
+func _slope_tri(tri: Array, top: float, tex: int) -> void:
+	var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+	if n.y < 0.0:
+		n = -n
+	var downhill := Vector2(n.x, n.z)
+	var along := Vector2(-downhill.y, downhill.x).normalized() if downhill.length() > 0.001 else Vector2.RIGHT
+	var uvs := []
+	for v: Vector3 in tri:
+		uvs.append(Vector2(Vector2(v.x, v.z).dot(along), top - v.y))
+	faces.append([tri, n, tex, uvs])
+
+
+## Closes a bank's side d (top edge a..b) down to the ground beside it
+## where that's lower: an end cap where a slope stops.
+func _bank_side(c: Vector2i, d: Vector2i, a: Vector3, b: Vector3, tex: int) -> void:
+	var n := c + d
+	var hn := _height(n)
+	if hn == -99:
+		return
+	var low_a: float
+	var low_b: float
+	if hn < 0:
+		low_a = WATER_SURFACE
+		low_b = WATER_SURFACE
+	elif _has_bank(n):
+		var other: Array = _bank_corners(n)[0]
+		var ka := CORNERS.find(Vector2(a.x - n.x, a.z - n.y))
+		var kb := CORNERS.find(Vector2(b.x - n.x, b.z - n.y))
+		low_a = other[ka]
+		low_b = other[kb]
+	else:
+		low_a = solid[n.y * size.x + n.x] if kind[n.y * size.x + n.x] != Kind.NONE else hn / 2.0
+		low_b = low_a
+	if a.y < low_a - 0.001 or b.y < low_b - 0.001 or (a.y <= low_a + 0.001 and b.y <= low_b + 0.001):
+		return
+	var out := Vector3(d.x, 0, d.y) * FACE_OFFSET
+	var top := maxf(a.y, b.y)
+	var u_a := _along(Vector2(a.x, a.z), Vector2(d))
+	var u_b := _along(Vector2(b.x, b.z), Vector2(d))
+	var pts := [a + out, b + out]
+	var uvs := [Vector2(u_a, top - a.y), Vector2(u_b, top - b.y)]
+	if b.y > low_b + 0.001:
+		pts.append(Vector3(b.x, low_b, b.z) + out)
+		uvs.append(Vector2(u_b, top - low_b))
+	if a.y > low_a + 0.001:
+		pts.append(Vector3(a.x, low_a, a.z) + out)
+		uvs.append(Vector2(u_a, top - low_a))
+	faces.append([pts, Vector3(d.x, 0, d.y), tex, uvs])
 
 
 ## A rounded outer corner, Pokemon style: the quarter keeps its square
@@ -511,6 +586,12 @@ func _wedge(c: Vector2i) -> void:
 	# Out to the face, which stands a hair past the diagonal.
 	var reach := -s.normalized() * FACE_OFFSET
 	faces.append([[_at(tri[0], top), _at(tri[1] + reach, top), _at(tri[2] + reach, top)], Vector3.UP, diag, tri_uvs])
+	if _has_bank(c - Vector2i(si.x, 0)) and _has_bank(c - Vector2i(0, si.y)):
+		# Between two slopes: the slope runs on along the diagonal, down to
+		# the cut-off corner.
+		_slope_tri([_at(p0, top), _at(p1, top), _at(open_corner, bottom)], top,
+			GridWorld.Tex.BANK_ROCK if _cliffy(c) else GridWorld.Tex.EARTH_SIDE)
+		return
 	if low > 0:
 		faces.append([[_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)], Vector3.UP, top_tex,
 			_planar([_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)])])

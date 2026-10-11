@@ -23,7 +23,14 @@ blocks.
   cell at a cliff's foot, solid and not walkable, and the rock slopes down
   across it at 45 degrees. Taller walls slope as a staircase of banks, one
   cell per block, stepping out over the ground in front; their outside
-  corners wrap round. Where there isn't room in front, the wall stays
+  corners wrap round.
+- A bank's slope is set by the heights at its cell's corners: each corner
+  is as high as the tallest block touching it that stands exactly a block
+  above the bank's floor, else the floor. Straight, corner, inside-corner,
+  stacked and diagonal slopes all meet without seams, and a slope's end is
+  closed down to the ground beside it. A plateau corner between two
+  slopes is cut diagonally (a wedge, whose cut-off corner doesn't count),
+  so the slope runs on along the diagonal. Where there isn't room in front, the wall stays
   vertical.
 - Which sides slope: terraces a block at a time always do; elsewhere a
   wall-style noise decides, sloping every side in some places and only

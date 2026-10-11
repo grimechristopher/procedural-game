@@ -429,9 +429,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 			var cell := Vector2i(x, z)
 			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
-			# Banks turn their own corners.
-			if _slope_sides[z * map_size.x + x] == 0:
-				_wedge_corner(cell, heights)
+			_wedge_corner(cell, heights, _slope_sides[z * map_size.x + x])
 	for z in map_size.y:
 		for x in map_size.x:
 			if heights[z * map_size.x + x] >= 0:
@@ -520,7 +518,8 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 ## slope. (Ramps already in place keep their way up.)
 func _place_banks(cell: Vector2i, heights: PackedInt32Array) -> void:
 	var h := _height_at(heights, cell)
-	if h < 2 or get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y)) not in [Tile.FULL, Tile.ROCK]:
+	var top := get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y))
+	if h < 2 or top not in [Tile.FULL, Tile.ROCK, Tile.WEDGE, Tile.WEDGE_DIRT]:
 		return
 	var banked: Array[Vector2i] = []
 	var sides := _slope_sides[cell.y * map_size.x + cell.x]
@@ -529,6 +528,8 @@ func _place_banks(cell: Vector2i, heights: PackedInt32Array) -> void:
 		if sides & (1 << b) and _bank_foot(cell + d, h - 2, heights):
 			set_cell_item(Vector3i(cell.x + d.x, (h - 2) / 2, cell.y + d.y), Tile.BANK)
 			banked.append(d)
+	if top in [Tile.WEDGE, Tile.WEDGE_DIRT]:
+		return  # the slope runs along the diagonal instead of round a corner
 	for d in DIAGONAL:
 		if Vector2i(d.x, 0) in banked and Vector2i(0, d.y) in banked and _bank_foot(cell + d, h - 2, heights):
 			set_cell_item(Vector3i(cell.x + d.x, (h - 2) / 2, cell.y + d.y), Tile.BANK)
@@ -561,10 +562,11 @@ func _stack_column(cell: Vector2i, h: int) -> void:
 
 ## Cuts a plateau's outside corner at 45 degrees: a cell whose two
 ## neighbours on adjacent sides, and the diagonal between them, are lower,
-## with level plateau on the other sides and diagonal. (Ground that keeps
+## with level plateau on the other sides and diagonal. Where the cell's
+## cliffs slope (`sloped`, its _slope_sides), only between two slopes. (Ground that keeps
 ## climbing diagonally stays stepped: wedging every step would leave cells
 ## joined only at their corners.)
-func _wedge_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
+func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> void:
 	var h := _height_at(heights, cell)
 	if h < 1:
 		return
@@ -575,6 +577,12 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array) -> void:
 		var corner := _height_at(heights, cell + d)
 		if low < 0 or low >= h or _height_at(heights, cell + b) != low or corner < 0 or corner > low:
 			continue
+		if sloped:
+			# Sloped cliffs: only a diagonal between two slopes a block high
+			# (the slope then runs on along the diagonal, see TerrainMesh).
+			var bits := (1 << ORTHOGONAL.find(a)) | (1 << ORTHOGONAL.find(b))
+			if sloped & bits != bits or h - low != 2:
+				continue
 		if _height_at(heights, cell - a) == h and _height_at(heights, cell - b) == h \
 				and _height_at(heights, cell - d) == h:
 			_wedge_column(cell, low, h, -d)
