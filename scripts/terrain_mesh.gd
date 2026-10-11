@@ -406,12 +406,14 @@ func _is_bank(c: Vector2i, d: Vector2i) -> bool:
 func _only_banks(c: Vector2i, q: Vector2i, piece: int) -> bool:
 	var sx := Vector2i(q.x, 0)
 	var sz := Vector2i(0, q.y)
+	# (A slope facing away from the camera (north) can't be seen, so its
+	# edge keeps the band on the flat top, as HGSS outlines north edges.)
 	if piece == Piece.INNER:
-		return _has_bank(c + q)
+		return _has_bank(c + q) and q.y > 0
 	var any := false
 	for side in [sx, sz]:
 		if _is_exposed(c, side):
-			if not _is_bank(c, side):
+			if not _is_bank(c, side) or side.y < 0:
 				return false
 			any = true
 	return any
@@ -816,12 +818,15 @@ func _wedge(c: Vector2i) -> void:
 	var diag: int = GridWorld.Tex.CLIFF_DIAG if _cliffy(c) else GridWorld.Tex.EARTH_DIAG
 	if _rocky(h):
 		diag = GridWorld.Tex.ROCK_DIAG
-	if _sloped_wedge(c):
+	# A diagonal slope facing the camera has plain ground to its edge; one
+	# facing away keeps the band (see _only_banks).
+	var plain := _sloped_wedge(c) and s.y < 0.0
+	if plain:
 		diag = top_tex if not _rocky(h) else GridWorld.Tex.ROCK_TOP
 	var tri := [solid_corner, p0, p1]
 	var tri_uvs := []
 	for p in tri:
-		if _sloped_wedge(c):
+		if plain:
 			tri_uvs.append(p)
 		else:
 			tri_uvs.append(Vector2(0.5 + (p.x - center.x) * -s.x, 0.5 + (p.y - center.y) * -s.y))
