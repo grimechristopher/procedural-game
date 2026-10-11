@@ -280,7 +280,10 @@ func generate(new_seed: int) -> void:
 	_check_wedges(heights)
 	_bury_covered_blocks()
 	height_map = heights
-	_edges = TerrainMesh.build(self, heights, terrain)
+	var blocks := PackedInt32Array()
+	for h in heights:
+		blocks.append(-1 if h < 0 else h / 2)
+	_edges = TerrainShapes.build(blocks, map_size)
 	add_child(_edges)
 
 
@@ -2238,7 +2241,7 @@ func _build_mesh_library() -> MeshLibrary:
 		lib.set_item_name(item[0], item[1])
 		lib.set_item_mesh(item[0], _build_mesh(item[2], item[3], mat))
 	if hide_terrain_blocks:
-		for tile in TerrainMesh.HIDDEN:
+		for tile in TerrainShapes.HIDDEN:
 			lib.set_item_mesh(tile, null)
 
 	var water_mat := ShaderMaterial.new()
