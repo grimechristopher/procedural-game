@@ -186,6 +186,8 @@ var _building_meshes: Node3D
 var _edges: Node3D
 ## Ground heights from the last generate, in half blocks (-1 is water).
 var height_map := PackedInt32Array()
+## How deep the plateau beside a corridor must be (see _walled).
+var _corridor_walls := 2
 ## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
 ## (Off for hand-built test maps, which have no terrain mesh.)
 @export var hide_terrain_blocks := true
@@ -237,6 +239,8 @@ func generate(new_seed: int) -> void:
 			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
 	_place_scenery(terrain, heights, reserved)
 	_connect_everything(heights, reserved)
+	if _smooth_fins(heights, reserved) > 0:
+		_connect_everything(heights, reserved)
 	_bury_covered_blocks()
 	height_map = heights
 	_edges = TerrainMesh.build(self, heights, terrain)
@@ -625,20 +629,34 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 		var joined := 0
 		for pocket in members:
 			var cells: Array = members[pocket]
+			# The gentlest way in from anywhere round the pocket first: a ramp
+			# or clearing before cutting a corridor into a cliff.
+			# Corridors keep plateau two cells deep either side where they
+			# can, one where that's all there is.
 			var done := false
-			for cell in cells:
-				if _join(cell, reached, surface, heights, reserved):
-					done = true
-					break
-			if not done:
-				for cell in cells:
-					if _carve_join(cell, reached, surface, heights, reserved):
-						done = true
+			for depth in [2, 1]:
+				_corridor_walls = depth
+				for cut in [false, true]:
+					for cell in cells:
+						if _join(cell, reached, surface, heights, reserved, cut):
+							done = true
+							break
+					if done:
 						break
+				if not done:
+					for cell in cells:
+						if _carve_join(cell, reached, surface, heights, reserved):
+							done = true
+							break
+				if done:
+					break
 			if not done and cells.size() <= SMALL_POCKET:
 				done = _level_pocket(cells, reached, surface, heights, reserved)
 			if done:
 				joined += 1
+				# Pockets beside it can join it now, rather than each finding
+				# its own way in.
+				_grow_reach(surface, reached, cells)
 		if joined == 0:
 			return
 
@@ -676,6 +694,32 @@ func _reach(surface: Array, within: PackedByteArray, start: Vector2i) -> PackedB
 				reached[i] = 1
 				frontier.append(n)
 	return reached
+
+
+## Spreads `reached` from reached ground beside the given cells into
+## whatever it now connects to (after a join changed the ground there).
+func _grow_reach(surface: Array, reached: PackedByteArray, around: Array) -> void:
+	var frontier: Array[Vector2i] = []
+	for c: Vector2i in around:
+		for d in ORTHOGONAL:
+			var n := c + d
+			if n.x >= 0 and n.y >= 0 and n.x < map_size.x and n.y < map_size.y \
+					and reached[n.y * map_size.x + n.x]:
+				frontier.append(n)
+	while not frontier.is_empty():
+		var c: Vector2i = frontier.pop_back()
+		var sc: Dictionary = surface[c.y * map_size.x + c.x]
+		for d in ORTHOGONAL:
+			var n := c + d
+			if n.x < 0 or n.y < 0 or n.x >= map_size.x or n.y >= map_size.y:
+				continue
+			var i := n.y * map_size.x + n.x
+			if reached[i]:
+				continue
+			var e := _edge(sc, d)
+			if not is_nan(e) and is_equal_approx(_edge(surface[i], -d), e):
+				reached[i] = 1
+				frontier.append(n)
 
 
 ## Numbers the separate pockets of walkable ground that weren't reached
@@ -784,9 +828,10 @@ func _unshape(cell: Vector2i, heights: PackedInt32Array) -> void:
 
 ## Joins the pocket containing u to reachable ground next to it, if it
 ## can: a ramp up or down a half or whole block, or clearing a tree or rock
-## between u and reachable ground at the same level.
+## between u and reachable ground at the same level; with `cut`, also a
+## corridor up a taller wall.
 func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
-		reserved: Dictionary) -> bool:
+		reserved: Dictionary, cut := false) -> bool:
 	var hu := _height_at(heights, u)
 	for d in ORTHOGONAL:
 		var r := u + d
@@ -818,7 +863,7 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 			var dir := d if hu < hr else -d
 			if _place_ramp(_ramp_pieces(low, dir, heights, reserved), dir, surface):
 				return true
-		elif reached[ri] and absi(hu - hr) > 2:
+		elif cut and reached[ri] and absi(hu - hr) > 2:
 			var low := u if hu < hr else r
 			var dir := d if hu < hr else -d
 			if _cut_ramps(low, dir, heights, reserved, surface):
@@ -850,11 +895,15 @@ func _cut_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserve
 		return false
 	if not _ramp_room(low, h / 2, h, reserved) or get_cell_item(Vector3i(low.x, h / 2, low.y)) != INVALID_CELL_ITEM:
 		return false
-	# The corridor and its landing must be plain plateau.
+	# The corridor and its landing must be plain plateau, clear of other
+	# ways up (no corridors side by side or crossing).
 	for i in range(1, steps + 1):
 		var c := low + dir * i
 		if reserved.has(c) or _height_at(heights, c) != top \
 				or get_cell_item(Vector3i(c.x, top / 2 - 1, c.y)) not in [Tile.FULL, Tile.ROCK]:
+			return false
+	for i in range(0, steps + 1):
+		if _ramp_near(low + dir * i) or (i > 0 and not _walled(low + dir * i, dir, top, heights)):
 			return false
 	for i in range(1, steps):
 		var c := low + dir * i
@@ -875,6 +924,68 @@ func _cut_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reserve
 				_unshape(n, heights)
 			surface[n.y * map_size.x + n.x] = _top_surface(n)
 	return true
+
+
+## Whether a ramp is in the column at cell or beside it, so a corridor
+## there would run alongside or across another way up.
+func _ramp_near(cell: Vector2i) -> bool:
+	for d in ORTHOGONAL + [Vector2i.ZERO]:
+		var n: Vector2i = cell + d
+		for layer in range(0, TOP_LAYER + 1):
+			var item := get_cell_item(Vector3i(n.x, layer, n.y))
+			if item in HILL_RAMPS:
+				return true
+	return false
+
+
+## Whether a corridor cell has plateau _corridor_walls cells deep on both
+## sides, so cutting it doesn't leave a thin wall standing.
+func _walled(cell: Vector2i, dir: Vector2i, top: int, heights: PackedInt32Array) -> bool:
+	var side := Vector2i(dir.y, dir.x)
+	for k in range(1, _corridor_walls + 1):
+		if _height_at(heights, cell + side * k) < top or _height_at(heights, cell - side * k) < top:
+			return false
+	return true
+
+
+## Knocks down one-cell fins (ground standing above the ground on two
+## opposite sides, left between cuts and levelled pockets) and fills in
+## one-cell slots, to the level on either side. Returns how many cells
+## changed. Ramps, banks and reserved cells stay.
+func _smooth_fins(heights: PackedInt32Array, reserved: Dictionary) -> int:
+	var changed := 0
+	for z in range(1, map_size.y - 1):
+		for x in range(1, map_size.x - 1):
+			var c := Vector2i(x, z)
+			var h := _height_at(heights, c)
+			if h < 0 or reserved.has(c) or _ramp_near_cell(c) or _has_bank(c, h):
+				continue
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
+				var a := _height_at(heights, c + d)
+				if a < 0 or a == h or absi(a - h) > 2 or _height_at(heights, c - d) != a \
+						or _ramp_near_cell(c + d) or _ramp_near_cell(c - d):
+					continue
+				for layer in range(0, TOP_LAYER + 1):
+					set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+				_stack_column(c, a)
+				heights[c.y * map_size.x + c.x] = a
+				for n in ORTHOGONAL + DIAGONAL + [Vector2i.ZERO]:
+					if _height_at(heights, c + n) >= 0:
+						_unshape(c + n, heights)
+				changed += 1
+				break
+	return changed
+
+
+func _ramp_near_cell(cell: Vector2i) -> bool:
+	for layer in range(0, TOP_LAYER + 1):
+		if get_cell_item(Vector3i(cell.x, layer, cell.y)) in HILL_RAMPS:
+			return true
+	return false
+
+
+func _has_bank(cell: Vector2i, h: int) -> bool:
+	return h >= 0 and get_cell_item(Vector3i(cell.x, h / 2, cell.y)) == Tile.BANK
 
 
 ## Joins u's pocket to reachable ground a cliff above or below it where
@@ -915,6 +1026,9 @@ func _carve_ramps(low: Vector2i, dir: Vector2i, heights: PackedInt32Array, reser
 	var landing := low + dir * (steps + 1)
 	if surface[landing.y * map_size.x + landing.x].is_empty():
 		return false
+	for i in range(1, steps + 1):
+		if _ramp_near(low + dir * i) or not _walled(low + dir * i, dir, top, heights):
+			return false
 	for i in range(1, steps + 1):
 		var c := low + dir * i
 		var step := h + i - 1

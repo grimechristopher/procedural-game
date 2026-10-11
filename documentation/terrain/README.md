@@ -36,6 +36,14 @@ blocks.
   its foot. A ramp can take the place of a bank.
 - Every bit of land should be reachable; pockets that can't be joined are
   levelled into the ground beside them (up to 30 cells).
+- Pockets are joined the gentlest way first (a ramp or clearing before a
+  corridor), and each one joined counts as reachable straight away, so the
+  pockets beside it join it instead of each cutting its own way in.
+- Corridors never run alongside or across another ramp, and keep plateau
+  two cells deep either side (one where that's all there is), so they
+  don't leave thin walls standing.
+- Afterwards, one-cell fins and slots left between cuts and levelled
+  pockets are smoothed to the ground either side.
 
 ## Edges (autotiling)
 
