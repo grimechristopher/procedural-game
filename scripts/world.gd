@@ -274,7 +274,7 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_smooth_fins(heights, reserved)
 	_connect_everything(heights, reserved)
-	if _dress_banks(heights, reserved) > 0:
+	if _relegalize(heights, reserved) + _dress_banks(heights, reserved) > 0:
 		_connect_everything(heights, reserved)
 	_fill_bank_notches(heights, reserved)
 	_check_wedges(heights)
@@ -1018,6 +1018,29 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 			# pockets too, as a last resort.
 			level_limit = SMALL_POCKET * 2
 	_restore_banks(surface, heights)
+
+
+## Fixes illegal pieces (see _legalize) that joining left behind, away
+## from ramps and anything reserved, restacking each changed column and
+## reshaping round it. Returns how many cells changed.
+func _relegalize(heights: PackedInt32Array, reserved: Dictionary) -> int:
+	var want := heights.duplicate()
+	_legalize(want)
+	var changed := 0
+	for i in want.size():
+		var c := Vector2i(i % map_size.x, i / map_size.x)
+		if want[i] == heights[i] or heights[i] < 0 or reserved.has(c) or _ramp_near(c):
+			continue
+		for layer in range(0, TOP_LAYER + 1):
+			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)
+		_stack_column(c, want[i])
+		heights[i] = want[i]
+		changed += 1
+	if changed > 0:
+		for i in want.size():
+			if heights[i] >= 0:
+				_unshape(Vector2i(i % map_size.x, i / map_size.x), heights)
+	return changed
 
 
 ## Rule: every step a block high slopes. After the heights have changed
