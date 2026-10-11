@@ -1755,6 +1755,27 @@ func _surface(cell: Vector2i, layer: int) -> Dictionary:
 
 ## Whether a diagonal walk at height h can pass the given corner of a cell
 ## beside it (corner as a sign vector from the cell's center).
+## Whether a bank's slope is down at the floor (height h) at its corner
+## toward `corner` (no ground a block above touches that corner, as
+## TerrainMesh draws it), so a diagonal step can pass that corner, e.g.
+## along a diagonal ledge at a slope's foot.
+func _bank_foot_corner(cell: Vector2i, corner: Vector2i, h: float) -> bool:
+	var hc := _height_at(height_map, cell)
+	if hc < 0 or hc % 2 == 1 or get_cell_item(Vector3i(cell.x, hc / 2, cell.y)) != Tile.BANK \
+			or not is_equal_approx(hc / 2.0, h):
+		return false
+	for o: Vector2i in [Vector2i(corner.x, 0), Vector2i(0, corner.y), corner]:
+		var n := cell + o
+		if _height_at(height_map, n) != hc + 2:
+			continue
+		# (A diagonal cut's open corner doesn't count.)
+		var layer := (hc + 1) / 2
+		if _is_wedge(get_cell_item(Vector3i(n.x, layer, n.y))) and corner - o == -_corner_dir(n, layer):
+			continue
+		return false
+	return true
+
+
 func _corner_passable(cell: Vector2i, corner: Vector2i, h: float) -> bool:
 	if _corner_blocked(cell, corner, h):
 		return false
@@ -1762,6 +1783,8 @@ func _corner_passable(cell: Vector2i, corner: Vector2i, h: float) -> bool:
 		var ch := _corner_height(s, corner, false)
 		if is_equal_approx(ch, h):
 			return true
+	if _bank_foot_corner(cell, corner, h):
+		return true
 	for layer in range(GROUND_LAYER + 1, TOP_LAYER + 1):
 		var item := get_cell_item(Vector3i(cell.x, layer, cell.y))
 		if not _is_wedge(item):
