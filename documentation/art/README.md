@@ -190,11 +190,12 @@ along the edge below a wavy grass fringe, and runs on down the face.
   brickwork.
 - `BANK_ROCK`: the rock of an HGSS-style bank, laid along the slope with
   its top edge (row 0) at the cliff's top and row 15 at the foot of the
-  cell in front: rounded ribs of rock running *down* the slope (not
-  strata across it), wandering a little, lit on their left flanks and
-  shaded on their right, lighter at the lip and darker toward the foot,
-  ending in jagged tips with see-through (magenta) between them so the
-  ground shows. Tiles across. Also used for bank corners.
+  cell in front. From the top: the grass above hanging over the rock in a
+  wavy fringe 2-4 rows deep, edged dark green; a lit row of rock; then a
+  few chunky rounded ribs running *down* the slope, lit on their left
+  flanks, darkening toward the foot, where they end in dark-edged jagged
+  tips with see-through (magenta) between them so the ground shows. Tiles
+  across. Laid round corners in a fan, so it must read well bent round.
 - `SLOPE_LINES`: contour lines laid over a ramp's grass so the slope reads
   as one: rows running across the climb, two per tile (a lit lip over a
   slightly darker line, wavering a pixel), see-through (magenta)

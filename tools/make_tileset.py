@@ -500,11 +500,14 @@ def rock_top(px, ox, oy):
 
 
 ROCK_SHINE = (238, 196, 136)
+# How far (rows) the grass hangs over the top of a bank, column by column.
+BANK_FRINGE = [2, 3, 3, 4, 4, 3, 2, 2, 3, 4, 4, 4, 3, 2, 2, 2]
 
 
 def bank_rock(px, ox, oy):
     """The rock of an HGSS-style bank, a cliff face sloping across a whole
-    cell, top edge at row 0: a bright rounded lip along the top, then a few
+    cell, top edge at row 0: the grass above hanging over it in a wavy,
+    dark-edged fringe, a lit lip on the rock below that, then a few
     chunky rounded ribs of rock running down the slope, wandering a little,
     lit on their left flanks (a shine down each crest) and shaded on their
     right, darkening toward the foot, where they end in jagged tips with a
@@ -519,10 +522,16 @@ def bank_rock(px, ox, oy):
             if y > tip:
                 put(px, ox, oy, x, y, CLEAR)
                 continue
-            if y == 0:
-                put(px, ox, oy, x, y, ROCK_SHINE)
+            # The grass above hangs over the top of the rock in a wavy
+            # fringe, edged dark, as HGSS draws its banks.
+            fringe = BANK_FRINGE[x]
+            if y < fringe:
+                put(px, ox, oy, x, y, GRASS_LIGHT if (y == fringe - 1 and x % 5 == 2) else GRASS)
                 continue
-            if y == 1:
+            if y == fringe:
+                put(px, ox, oy, x, y, GRASS_EDGE)
+                continue
+            if y == fringe + 1:
                 put(px, ox, oy, x, y, ROCK_LIGHT)
                 continue
             if y > tip - 1.0:
