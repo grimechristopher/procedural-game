@@ -172,15 +172,19 @@ const WALL_SLOPE := 0.95
 ## How far either side of a cell its slope is measured, so patches of
 ## cliffs come out whole rather than speckled.
 const STEEP_REACH := 2
+## How far round each cell the elevation is averaged (see _blur).
+const SMOOTHING := 2
+## The fewest cells a patch of ground at its own height may have.
+const MIN_REGION := 16
 ## Walls this many blocks tall or more stand vertical (a large cliff);
 ## lower ones slope.
 const LARGE_CLIFF := 3
 ## Highest ground, in blocks.
 const MAX_HEIGHT := 10
 ## Ground this many blocks high or higher is bare rock.
-@export var rock_level := 5
+@export var rock_level := 99
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
-const RAMP_CHANCE := 0.03
+const RAMP_CHANCE := 0.0
 ## Cells to either side of a ramp kept clear of other ramps.
 const RAMP_GAP := 2
 ## Unreachable pockets this small (cells) get levelled if no ramp fits
@@ -242,7 +246,14 @@ func generate(new_seed: int) -> void:
 	spawn_cell = map_size / 2
 
 	var heights := _shape_heights(terrain)
-	_slope_walls(terrain, heights)
+	# Building tall slopes out over the ground can leave illegal pieces;
+	# fix them and pick the slopes again.
+	for i in 4:
+		_slope_walls(terrain, heights)
+		var fixed := _legalize(heights)
+		_terrace(heights)
+		if fixed == 0:
+			break
 	_build_terrain(terrain, heights)
 
 	var reserved := {}
@@ -263,6 +274,8 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_smooth_fins(heights, reserved)
 	_connect_everything(heights, reserved)
+	if _dress_banks(heights, reserved) > 0:
+		_connect_everything(heights, reserved)
 	_fill_bank_notches(heights, reserved)
 	_check_wedges(heights)
 	_bury_covered_blocks()
@@ -302,6 +315,7 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 				e = lerpf(0.25, e, smoothstep(0.0, 1.0, (edge - COAST_WATER - COAST_BEACH) / ISLAND_FALLOFF))
 			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
 			elevation[z * map_size.x + x] = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
+	elevation = _blur(elevation, SMOOTHING)
 	for z in map_size.y:
 		for x in map_size.x:
 			var i := z * map_size.x + x
@@ -311,7 +325,7 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 			if terrain.near_fault(x, z):
 				# An escarpment: one wall, its full height.
 				tiers = maxi(tiers, int(Terrain.FAULT_HEIGHT))
-			_max_drop[i] = 2 * tiers if tiers > 0 else 1
+			_max_drop[i] = 2 * maxi(tiers, 1)
 	for z in map_size.y:
 		for x in map_size.x:
 			var i := z * map_size.x + x
@@ -323,17 +337,131 @@ func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 				# ground rises in tall walls with wide shelves between.
 				var tiers := _max_drop[i] / 2
 				heights[i] = 2 * mini(floori(e / tiers) * tiers, MAX_HEIGHT)
-			elif _beside_cliffs(Vector2i(x, z)):
-				# Half cliffs give way beside full ones, rather than leaving
-				# half-block shelves squeezed between them.
-				heights[i] = 2 * mini(floori(e), MAX_HEIGHT)
 			else:
-				heights[i] = mini(floori(e * 2.0), MAX_HEIGHT * 2)
+				heights[i] = 2 * mini(floori(e), MAX_HEIGHT)
 	_terrace(heights)
 	for i in 3:
 		_despeckle(heights)
 		_terrace(heights)
+	for i in 10:
+		var fixed := _merge_small_regions(heights) + _legalize(heights)
+		_terrace(heights)
+		if fixed == 0:
+			break
 	return heights
+
+
+## The elevation averaged over a square (2 * r + 1 cells across) round
+## each cell, so contours run smoothly instead of wiggling cell to cell.
+## (Water stays water.)
+func _blur(src: PackedFloat32Array, r: int) -> PackedFloat32Array:
+	var out := src.duplicate()
+	for z in map_size.y:
+		for x in map_size.x:
+			var i := z * map_size.x + x
+			if src[i] < 0.0:
+				continue
+			var sum := 0.0
+			var n := 0
+			for dz in range(-r, r + 1):
+				for dx in range(-r, r + 1):
+					var c := Vector2i(x + dx, z + dz)
+					if c.x < 0 or c.y < 0 or c.x >= map_size.x or c.y >= map_size.y:
+						continue
+					sum += maxf(src[c.y * map_size.x + c.x], 0.0)
+					n += 1
+			out[i] = sum / n
+	return out
+
+
+## Rule: no tiny patches of ground at their own height. Each connected
+## patch of one height smaller than MIN_REGION cells takes the height most
+## of its border meets. Returns how many cells changed.
+func _merge_small_regions(heights: PackedInt32Array) -> int:
+	var label := PackedInt32Array()
+	label.resize(map_size.x * map_size.y)
+	label.fill(-1)
+	var changed := 0
+	for start in heights.size():
+		if label[start] != -1 or heights[start] < 0:
+			continue
+		var h := heights[start]
+		var cells: Array[int] = [start]
+		label[start] = start
+		var k := 0
+		var votes := {}
+		while k < cells.size():
+			var i := cells[k]
+			k += 1
+			var c := Vector2i(i % map_size.x, i / map_size.x)
+			for d in ORTHOGONAL:
+				var n := c + d
+				if n.x < 0 or n.y < 0 or n.x >= map_size.x or n.y >= map_size.y:
+					continue
+				var j := n.y * map_size.x + n.x
+				if heights[j] == h:
+					if label[j] == -1:
+						label[j] = start
+						cells.append(j)
+				elif heights[j] >= 0:
+					votes[heights[j]] = votes.get(heights[j], 0) + 1
+		if cells.size() >= MIN_REGION or votes.is_empty():
+			continue
+		var best := -1
+		for v in votes:
+			if best == -1 or votes[v] > votes[best]:
+				best = v
+		for i in cells:
+			heights[i] = best
+		changed += cells.size()
+	return changed
+
+
+## Fixes the illegal pieces in the heights (see documentation/terrain):
+## one-cell knobs and pits, one-cell fins (ridges) and slots (trenches,
+## the foot of two facing slopes), and checkerboards (same-height cells
+## touching only at a corner), each by bringing the cell to its
+## neighbours' level. Returns how many it changed.
+func _legalize(heights: PackedInt32Array) -> int:
+	var changed := 0
+	for z in map_size.y:
+		for x in map_size.x:
+			var c := Vector2i(x, z)
+			var i := z * map_size.x + x
+			var h := heights[i]
+			if h < 0:
+				continue
+			var nb: Array[int] = []
+			for d in ORTHOGONAL:
+				nb.append(_height_at(heights, c + d))
+			var to := h
+			# ORTHOGONAL is up, down, left, right: opposite pairs 0-1, 2-3.
+			for pair in [[0, 1], [2, 3]]:
+				var a: int = nb[pair[0]]
+				var b: int = nb[pair[1]]
+				if a < 0 or b < 0:
+					continue
+				if a < h and b < h:
+					to = mini(to, maxi(a, b))
+				elif a > h and b > h:
+					to = maxi(to, mini(a, b))
+			if to == h:
+				for q in DIAGONAL:
+					var ha := _height_at(heights, c + Vector2i(q.x, 0))
+					var hb := _height_at(heights, c + Vector2i(0, q.y))
+					if _height_at(heights, c + q) == h and ha >= 0 and hb >= 0 and ha != h and hb != h:
+						# Join the corner: the higher of the two in between
+						# comes to this level (or this one up to it).
+						if maxi(ha, hb) > h:
+							to = mini(ha, hb) if mini(ha, hb) > h else h
+						if to == h:
+							heights[(c + Vector2i(q.x, 0)).y * map_size.x + c.x + q.x] = h
+							changed += 1
+						break
+			if to != h:
+				heights[i] = to
+				changed += 1
+	return changed
 
 
 ## Cliffs for steep ground, however gentle its style: half cliffs there
@@ -489,8 +617,8 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 				# Rule: slopes are the default, HGSS style. Walls stand
 				# vertical only for a reason: a fault's escarpment (lore), a
 				# large cliff, or no room in front for the slope (below).
-				if drop >= 2 and drop % 2 == 0 and drop < LARGE_CLIFF * 2 \
-						and not terrain.near_fault(x, z):
+				if drop == 2 or (drop > 2 and drop % 2 == 0 and drop < LARGE_CLIFF * 2 \
+						and not terrain.near_fault(x, z)):
 					_slope_sides[z * map_size.x + x] |= 1 << b
 	# Grow the staircases a step at a time.
 	for step in 8:
@@ -890,6 +1018,33 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 			# pockets too, as a last resort.
 			level_limit = SMALL_POCKET * 2
 	_restore_banks(surface, heights)
+
+
+## Rule: every step a block high slopes. After the heights have changed
+## (corridors, levelled pockets), gives each such step without one its
+## bank, if the cell at its foot can take one. (Joining up again after it
+## swaps any that cut ground off for ramps.) Returns how many it placed.
+func _dress_banks(heights: PackedInt32Array, reserved: Dictionary) -> int:
+	var placed := 0
+	var settled := SETTLEMENT_RADIUS + 2.0
+	for z in map_size.y:
+		for x in map_size.x:
+			var r := Vector2i(x, z)
+			var h := heights[z * map_size.x + x]
+			if h < 0 or h % 2 == 1 or reserved.has(r) or _ramp_near_cell(r) \
+					or Vector2(r).distance_to(Vector2(spawn_cell)) < settled \
+					or not _bank_foot(r, h, heights):
+				continue
+			var below_cliff := false
+			for d in ORTHOGONAL:
+				var n := r + d
+				if _height_at(heights, n) == h + 2 and not _ramp_near_cell(n) \
+						and get_cell_item(Vector3i(n.x, h / 2, n.y)) in [Tile.FULL, Tile.ROCK]:
+					below_cliff = true
+			if below_cliff and get_cell_item(Vector3i(x, h / 2, z)) == INVALID_CELL_ITEM:
+				set_cell_item(Vector3i(x, h / 2, z), Tile.BANK)
+				placed += 1
+	return placed
 
 
 ## Puts back the banks _join took away (to climb the cliff behind them)

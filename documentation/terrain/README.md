@@ -61,6 +61,28 @@ blocks.
   turn the corner themselves), and turned in a **slight curve** where they
   stay square.
 
+## Illegal pieces
+
+The generator fixes these before building anything on the heights
+(`GridWorld._legalize`, `_merge_small_regions`), and again after tall
+slopes are laid out:
+
+- **Half-height ground.** Terrain comes in whole blocks; only ramps climb
+  in half steps.
+- **Tiny patches**: any connected patch of ground at one height smaller
+  than 16 cells takes the height of the land round it.
+- **Knobs and pits**: a cell higher (or lower) than all four neighbours.
+- **Fins and slots**: a one-cell ridge (lower on both opposite sides) or
+  trench (higher on both, the foot of two facing slopes).
+- **Checkerboards**: same-height cells touching only at a corner.
+- **A one-block step without its slope**: after everything is joined up,
+  every one-block step on land gets its bank (`_dress_banks`), and joining
+  runs again so any that cut ground off are swapped for ramps.
+
+The elevation is also smoothed before it's rounded to blocks, so contours
+run in long lines instead of wiggling. There are no decorative ramps: ramps
+go only where the land needs joining.
+
 ## Ways up
 
 - **No stairs in the wild.** Stairs are for man-made places, and never on
