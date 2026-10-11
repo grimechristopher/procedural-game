@@ -256,6 +256,7 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_smooth_fins(heights, reserved)
 	_connect_everything(heights, reserved)
+	_check_wedges(heights)
 	_bury_covered_blocks()
 	height_map = heights
 	_edges = TerrainMesh.build(self, heights, terrain)
@@ -590,9 +591,19 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 			continue
 		if sloped:
 			# Sloped cliffs: only a diagonal between two slopes a block high
-			# (the slope then runs on along the diagonal, see TerrainMesh).
+			# (the slope then runs on along the diagonal, see TerrainMesh),
+			# and only on a 45-degree run of them: a shallower edge stays
+			# stepped, its corners wrapped round, as HGSS draws it.
 			var bits := (1 << ORTHOGONAL.find(a)) | (1 << ORTHOGONAL.find(b))
 			if sloped & bits != bits or h - low != 2:
+				continue
+			var run := false
+			for along: Vector2i in [Vector2i(d.x, -d.y), Vector2i(-d.x, d.y)]:
+				var n := cell + along
+				if _height_at(heights, n) == h and _height_at(heights, n + a) == low \
+						and _height_at(heights, n + b) == low:
+					run = true
+			if not run:
 				continue
 		# Level plateau behind (or, within a slope's staircase, plateau or
 		# more slope rising behind it).
@@ -601,6 +612,26 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 		if behind.all(func(hb: int) -> bool: return hb == h or (within and hb > h)):
 			_wedge_column(cell, low, h, -d)
 			return
+
+
+## Squares off diagonal cuts that no longer sit on a corner (the ground
+## round them changed after they were cut: a corridor, a levelled pocket).
+func _check_wedges(heights: PackedInt32Array) -> void:
+	for z in map_size.y:
+		for x in map_size.x:
+			var cell := Vector2i(x, z)
+			var h := heights[z * map_size.x + x]
+			if h < 1:
+				continue
+			var layer := (h - 1) / 2
+			if not _is_wedge(get_cell_item(Vector3i(x, layer, z))):
+				continue
+			var s := _corner_dir(cell, layer)
+			var low_a := _height_at(heights, cell - Vector2i(s.x, 0))
+			var low_b := _height_at(heights, cell - Vector2i(0, s.y))
+			var corner := _height_at(heights, cell - s)
+			if low_a < 0 or low_a >= h or low_b != low_a or corner < 0 or corner > low_a:
+				_unshape(cell, heights)
 
 
 ## Swaps the blocks of a column between heights low and high (in steps)
@@ -877,18 +908,20 @@ func _label_pockets(surface: Array, reached: PackedByteArray) -> PackedInt32Arra
 ## old heights.
 func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
 		reserved: Dictionary) -> bool:
+	# The reachable flat ground beside it nearest its own height (however
+	# far, so a small knob between tall walls comes down too).
 	var target := -99
+	var gap := 99
 	for c in cells:
 		for d in ORTHOGONAL:
 			var r: Vector2i = c + d
 			var hr := _height_at(heights, r)
 			var ri := r.y * map_size.x + r.x
+			var g := absi(hr - _height_at(heights, c))
 			if hr >= 0 and reached[ri] and _rise(surface[ri].get("tile", -1)) == 0.0 and not surface[ri].is_empty() \
-					and absi(hr - _height_at(heights, c)) <= 2 and hr != _height_at(heights, c):
+					and g > 0 and g < gap:
 				target = hr
-				break
-		if target != -99:
-			break
+				gap = g
 	if target == -99:
 		# Nothing reachable and flat beside it (it's boxed in by slopes):
 		# level it with the most common height around it instead.
@@ -906,7 +939,7 @@ func _level_pocket(cells: Array, reached: PackedByteArray, surface: Array, heigh
 		return false
 	for c in cells:
 		var h := _height_at(heights, c)
-		if h == target or absi(h - target) > 2 or reserved.has(c):
+		if h == target or reserved.has(c):
 			continue
 		for layer in range(0, TOP_LAYER + 1):
 			set_cell_item(Vector3i(c.x, layer, c.y), INVALID_CELL_ITEM)

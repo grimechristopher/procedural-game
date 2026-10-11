@@ -33,6 +33,9 @@ blocks.
   slopes is cut diagonally (a wedge, whose cut-off corner doesn't count),
   so the slope runs on along the diagonal; within a tall slope's staircase
   too, at every level (not on natural terraces, whose shelves are walked).
+  Only on a 45-degree run of such corners: a shallower edge stays stepped,
+  its corners wrapped round, as HGSS draws it. Cuts the ground round them
+  no longer fits (after joining) are squared off again.
 - Which sides slope (as in HGSS): every step a block high slopes, where
   there's room for the bank in front. Taller walls stand vertical, unless a
   wall-style noise leans them into staircases of banks (like contour lines
@@ -55,8 +58,9 @@ blocks.
   its foot. A ramp can take the place of a bank, and a slope of several
   banks is climbed by a ramp laid down through it and on over its foot.
 - Every bit of land should be reachable; pockets that can't be joined are
-  levelled into the ground beside them (up to 30 cells, or 60 once nothing
-  else will join).
+  levelled to the reachable flat ground beside them nearest their height
+  (up to 30 cells, or 60 once nothing else will join), so a small knob
+  boxed in by tall walls comes down.
 - Joins go gentlest first: a ramp or clearing, then a corridor or a ramp
   laid down through a slope (which may end in a step), then carving into
   a cliff top, and only last taking a bank away. A clearing (a tree, a
