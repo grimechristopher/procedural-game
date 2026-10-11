@@ -152,6 +152,16 @@ const SETTLEMENT_RADIUS := 15.0
 const SETTLEMENT_BLEND := 8.0
 ## Cells over which the land falls away into ocean at the map's edge.
 const ISLAND_FALLOFF := 10.0
+## Elevation slopes (blocks per cell) past which ground gets full cliffs:
+## stepping back, then stacked two high, then three. Each keeps shelves
+## between cliffs about two cells wide or more (half cliffs at a quarter
+## block per cell come every two cells).
+const STEEP_SLOPE := 0.25
+const SHEER_SLOPE := 0.6
+const WALL_SLOPE := 0.95
+## How far either side of a cell its slope is measured, so patches of
+## cliffs come out whole rather than speckled.
+const STEEP_REACH := 2
 ## Highest ground, in blocks.
 const MAX_HEIGHT := 10
 ## Ground this many blocks high or higher is bare rock.
@@ -172,6 +182,8 @@ var buildings: Array[Dictionary] = []
 var _block_material: ShaderMaterial
 var _building_meshes: Node3D
 var _edges: Node3D
+## Ground heights from the last generate, in half blocks (-1 is water).
+var height_map := PackedInt32Array()
 ## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
 ## (Off for hand-built test maps, which have no terrain mesh.)
 @export var hide_terrain_blocks := true
@@ -224,6 +236,7 @@ func generate(new_seed: int) -> void:
 	_place_scenery(terrain, heights, reserved)
 	_connect_everything(heights, reserved)
 	_bury_covered_blocks()
+	height_map = heights
 	_edges = TerrainMesh.build(self, heights, terrain)
 	add_child(_edges)
 
@@ -237,34 +250,91 @@ func generate(new_seed: int) -> void:
 ## back one block at a time.
 ##
 ## Built from the terrain's elevation, flattened round the settlement, sunk
-## into ocean at the edges, terraced so no cell drops further than its
+## into ocean at the edges, given full cliffs wherever it's steep,
+## terraced so no cell drops further than its
 ## cliffs allow, and smoothed of one-cell knobs and pits.
 func _shape_heights(terrain: Terrain) -> PackedInt32Array:
 	var heights := PackedInt32Array()
 	heights.resize(map_size.x * map_size.y)
 	_max_drop.resize(map_size.x * map_size.y)
+	var elevation := PackedFloat32Array()
+	elevation.resize(map_size.x * map_size.y)
 	for z in map_size.y:
 		for x in map_size.x:
-			var i := z * map_size.x + x
 			var e := terrain.elevation(x, z)
 			var edge := minf(minf(x, map_size.x - 1 - x), minf(z, map_size.y - 1 - z)) / ISLAND_FALLOFF
 			e = lerpf(-2.0, e, smoothstep(0.0, 1.0, edge))
 			var d := Vector2(x, z).distance_to(Vector2(spawn_cell))
-			e = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
+			elevation[z * map_size.x + x] = lerpf(0.25, e, smoothstep(SETTLEMENT_RADIUS, SETTLEMENT_RADIUS + SETTLEMENT_BLEND, d))
+	for z in map_size.y:
+		for x in map_size.x:
+			var i := z * map_size.x + x
+			var tiers := _steep_tiers(elevation, Vector2i(x, z))
 			if terrain.is_cliffy(x, z):
+				tiers = maxi(tiers, terrain.cliff_tiers(x, z))
+			_max_drop[i] = 2 * tiers if tiers > 0 else 1
+	for z in map_size.y:
+		for x in map_size.x:
+			var i := z * map_size.x + x
+			var e := elevation[i]
+			if e < 0.0:
+				heights[i] = -1
+			elif _max_drop[i] > 1:
 				# Rounded to whole stacks of cliffs, so where they stack the
 				# ground rises in tall walls with wide shelves between.
-				var tiers := terrain.cliff_tiers(x, z)
-				_max_drop[i] = 2 * tiers
-				heights[i] = -1 if e < 0.0 else 2 * mini(floori(e / tiers) * tiers, MAX_HEIGHT)
+				var tiers := _max_drop[i] / 2
+				heights[i] = 2 * mini(floori(e / tiers) * tiers, MAX_HEIGHT)
+			elif _beside_cliffs(Vector2i(x, z)):
+				# Half cliffs give way beside full ones, rather than leaving
+				# half-block shelves squeezed between them.
+				heights[i] = 2 * mini(floori(e), MAX_HEIGHT)
 			else:
-				_max_drop[i] = 1
-				heights[i] = -1 if e < 0.0 else mini(floori(e * 2.0), MAX_HEIGHT * 2)
+				heights[i] = mini(floori(e * 2.0), MAX_HEIGHT * 2)
 	_terrace(heights)
 	for i in 3:
 		_despeckle(heights)
 		_terrace(heights)
 	return heights
+
+
+## Cliffs for steep ground, however gentle its style: half cliffs there
+## would come every cell, in rows of one-cell shelves. Full cliffs step
+## back (banks) where it's steep, and stack two or three high where it's
+## steeper still. 0 where half cliffs will do.
+func _steep_tiers(elevation: PackedFloat32Array, cell: Vector2i) -> int:
+	var slope := 0.0
+	for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1), Vector2i(1, 1), Vector2i(1, -1)]:
+		var a := cell + d * STEEP_REACH
+		var b := cell - d * STEEP_REACH
+		a = a.clamp(Vector2i.ZERO, map_size - Vector2i.ONE)
+		b = b.clamp(Vector2i.ZERO, map_size - Vector2i.ONE)
+		if a == b:
+			continue
+		var run := Vector2(a - b).length()
+		var rise := absf(elevation[a.y * map_size.x + a.x] - elevation[b.y * map_size.x + b.x]) / run
+		slope = maxf(slope, rise)
+	if slope > WALL_SLOPE:
+		return 3
+	return 2 if slope > SHEER_SLOPE else (1 if slope > STEEP_SLOPE else 0)
+
+
+func _beside_cliffs(cell: Vector2i) -> bool:
+	for d in ORTHOGONAL:
+		var n := cell + d
+		if n.x >= 0 and n.y >= 0 and n.x < map_size.x and n.y < map_size.y and is_cliffy_at(n):
+			return true
+	return false
+
+
+## Whether a cell's cliffs are full cliffs (rock), not half cliffs.
+func is_cliffy_at(cell: Vector2i) -> bool:
+	return _max_drop[cell.y * map_size.x + cell.x] > 1
+
+
+## Whether a cell's full cliffs step back one at a time, as HGSS-style
+## banks, rather than stacking into vertical walls.
+func has_banks_at(cell: Vector2i) -> bool:
+	return _max_drop[cell.y * map_size.x + cell.x] == 2
 
 
 ## Lowers cells until none drops further to a side neighbour than its
@@ -345,7 +415,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 			if heights[z * map_size.x + x] < 0 or Vector2(cell).distance_to(Vector2(spawn_cell)) < settled:
 				continue
 			# Banks turn their own corners.
-			if not terrain.has_banks(x, z):
+			if not has_banks_at(cell):
 				_wedge_corner(cell, heights)
 	for z in map_size.y:
 		for x in map_size.x:
@@ -353,7 +423,7 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 				_maybe_ramp(Vector2i(x, z), heights)
 	for z in map_size.y:
 		for x in map_size.x:
-			if terrain.has_banks(x, z):
+			if has_banks_at(Vector2i(x, z)):
 				_place_banks(Vector2i(x, z), heights)
 
 

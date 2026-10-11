@@ -7,7 +7,14 @@ blocks.
 ## Shape
 
 - **Half cliffs** (half a block) on gentle ground; **full cliffs** (one
-  block) on cliffy ground.
+  block) on cliffy ground, and wherever the ground is steep (climbing more
+  than a quarter block per cell, measured over a few cells), so shelves
+  between cliffs stay about two cells wide or more instead of coming in
+  rows of one-cell strips. Steeper ground stacks its cliffs two or three
+  high.
+- Half cliffs give way beside full cliffs: gentle ground next to cliffy
+  ground rounds to whole blocks, so no half-block shelves get squeezed
+  between full cliffs.
 - Full cliffs either **step back** one block at a time (terraces) or
   **stack** straight up into walls two or three blocks tall, as the noise
   decides.

@@ -294,7 +294,7 @@ func _diagonal_meets(c: Vector2i, q: Vector2i) -> bool:
 	return false
 
 func _cliffy(c: Vector2i) -> bool:
-	return terrain.is_cliffy(c.x, c.y)
+	return world.is_cliffy_at(c)
 
 # --- Raised blocks and ground-level shores ---------------------------------
 
