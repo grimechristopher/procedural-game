@@ -45,6 +45,8 @@ const LIFT := 0.003
 ## How far a bank's top edge dips below the ground above it (see
 ## _add_lipped), in blocks.
 const LIP := 0.15
+## Segments in the curve round a slope's corner.
+const SLOPE_ARC_STEPS := 6
 ## Where a tapered band's outer edge is pulled in to (in tile units, from
 ## the tile's top-left): past the band, so it narrows to nothing.
 const TAPER_END := 10.5 / 16.0
@@ -455,13 +457,15 @@ func _add_lipped(quarter: Array, c: Vector2i, q: Vector2i) -> void:
 func _slope_continues(c: Vector2i) -> bool:
 	if not _has_bank(c):
 		return false
-	var ys: Array = _bank_corners(c)[0]
+	var r: Array = _bank_corners(c)
+	var ys: Array = r[0]
 	var floor_y := _height(c) / 2.0
 	var at_floor := 0
 	for y in ys:
 		if y <= floor_y + 0.001:
 			at_floor += 1
-	if at_floor > 2:
+	# (Beside a diagonal cut, half the cell is flat ground left showing.)
+	if at_floor > 3 or (at_floor == 3 and r[2]):
 		return false
 	for d in GridWorld.ORTHOGONAL:
 		if _height(c + d) == _height(c) - 2 and _has_bank(c + d):
@@ -559,8 +563,13 @@ func _bank_cell(c: Vector2i) -> void:
 		var others: Array = [ys[(k + 1) % 4], ys[(k + 2) % 4], ys[(k + 3) % 4]]
 		if is_equal_approx(others[0], others[1]) and is_equal_approx(others[1], others[2]) \
 				and not is_equal_approx(ys[k], others[0]):
+			if not r[2]:
+				# Rule: corners of slopes turn in a curve, HGSS style.
+				_round_bank(c, k, ys[k], others[0], top, tex)
+				tris = []
+				break
 			var through := k % 2 == 0
-			if r[2] and ys[k] > others[0]:
+			if ys[k] > others[0]:
 				through = not through
 			tris = [[0, 1, 2], [0, 2, 3]] if through else [[0, 1, 3], [1, 2, 3]]
 	for t in tris:
@@ -571,6 +580,39 @@ func _bank_cell(c: Vector2i) -> void:
 	for e in 4:
 		var d: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][e]
 		_bank_side(c, d, pts[e], pts[(e + 1) % 4], face_tex)
+
+
+## A bank on a corner of a slope, turned in a curve: a quarter cone
+## round its odd corner k (at height y_k; the other three at y_rest), out
+## to a radius of one cell. Round an outside corner it's a cone falling
+## away (the ribs fanning out); in an inside corner, a bowl rising to the
+## ground above, with that ground carried on flat beyond the curve.
+func _round_bank(c: Vector2i, k: int, y_k: float, y_rest: float, top: float, tex: int) -> void:
+	var apex: Vector2 = Vector2(c) + CORNERS[k]
+	var da: Vector2 = Vector2(c) + CORNERS[(k + 1) % 4] - apex
+	var db: Vector2 = Vector2(c) + CORNERS[(k + 3) % 4] - apex
+	var arc := []
+	for i in SLOPE_ARC_STEPS + 1:
+		var a := float(i) / SLOPE_ARC_STEPS * PI / 2.0
+		arc.append(apex + da * cos(a) + db * sin(a))
+	var step := PI / 2.0 / SLOPE_ARC_STEPS
+	for i in SLOPE_ARC_STEPS:
+		var tri := [_at(apex, y_k), _at(arc[i], y_rest), _at(arc[i + 1], y_rest)]
+		var n: Vector3 = (tri[1] - tri[0]).cross(tri[2] - tri[0]).normalized()
+		if n.y < 0.0:
+			n = -n
+		faces.append([tri, n, tex, [Vector2((i + 0.5) * step, top - y_k),
+			Vector2(i * step, top - y_rest), Vector2((i + 1) * step, top - y_rest)]])
+	if y_k < y_rest:
+		# The ground above, carried on flat round the bowl to the far corner.
+		var far: Vector2 = Vector2(c) + CORNERS[(k + 2) % 4]
+		var ground: int = GridWorld.Tex.ROCK_TOP if _rocky(roundi(y_rest * 2.0)) else GridWorld.Tex.GRASS
+		for d in GridWorld.ORTHOGONAL:
+			if _height(c + d) == _height(c) + 2 and _has_bank(c + d):
+				ground = GridWorld.Tex.DIRT  # partway down a taller slope: rock
+		for i in SLOPE_ARC_STEPS:
+			var tri := [_at(far, y_rest), _at(arc[i], y_rest), _at(arc[i + 1], y_rest)]
+			faces.append([tri, Vector3.UP, ground, [far, arc[i], arc[i + 1]]])
 
 
 ## The texture of a slope topping out at `top` (blocks): earth on gentle

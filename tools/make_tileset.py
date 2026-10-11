@@ -499,29 +499,38 @@ def rock_top(px, ox, oy):
         put(px, ox, oy, x + 1, y + 1, ROCK_DARK)
 
 
+ROCK_SHINE = (238, 196, 136)
+
+
 def bank_rock(px, ox, oy):
     """The rock of an HGSS-style bank, a cliff face sloping across a whole
-    cell, top edge at row 0: rounded ribs of rock running down the slope,
-    wandering a little, lit on their left flanks and shaded on their right,
-    lighter near the lip and darker toward the foot, where they end in
-    jagged tips (see-through between, so the ground shows). Tiles across."""
+    cell, top edge at row 0: a bright rounded lip along the top, then a few
+    chunky rounded ribs of rock running down the slope, wandering a little,
+    lit on their left flanks (a shine down each crest) and shaded on their
+    right, darkening toward the foot, where they end in jagged tips with a
+    dark edge (see-through between, so the ground shows). Tiles across."""
     import math
     for y in range(T):
         for x in range(T):
-            # Ridges across the tile (periodic in x so it tiles), drifting
-            # sideways a little down the slope.
-            u = (x + 0.6 * math.sin(y * 0.7)) / T * 2 * math.pi
-            ridge = 0.55 * math.sin(u * 3) + 0.3 * math.sin(u * 5 + 1.3) + 0.15 * math.sin(u * 2 + 0.4)
-            slope_side = 0.55 * math.cos(u * 3) * 3 + 0.3 * math.cos(u * 5 + 1.3) * 5
-            # Ridge crests reach further down at the foot.
-            tip = 12.5 + 2.5 * ridge
+            u = (x + 0.5 * math.sin(y * 0.6)) / T * 2 * math.pi
+            ridge = 0.7 * math.sin(u * 3) + 0.3 * math.sin(u * 2 + 0.9)
+            flank = 0.7 * 3 * math.cos(u * 3) + 0.3 * 2 * math.cos(u * 2 + 0.9)
+            tip = 12.0 + 3.0 * (ridge * 0.5 + 0.5)
             if y > tip:
                 put(px, ox, oy, x, y, CLEAR)
                 continue
-            light = 0.25 * slope_side / 2.0 + 0.35 * ridge - y / 16.0 * 0.9 + 0.35
-            if y < 2:
-                light += 0.35
-            c = ROCK_DARK if light < -0.35 else ROCK_MID if light < 0.0 else ROCK if light < 0.4 else ROCK_LIGHT
+            if y == 0:
+                put(px, ox, oy, x, y, ROCK_SHINE)
+                continue
+            if y == 1:
+                put(px, ox, oy, x, y, ROCK_LIGHT)
+                continue
+            if y > tip - 1.0:
+                put(px, ox, oy, x, y, ROCK_DARK)
+                continue
+            light = 0.18 * flank + 0.45 * ridge - (y - 2) / 13.0 * 0.9 + 0.25
+            c = ROCK_DARK if light < -0.45 else ROCK_MID if light < -0.05 else ROCK if light < 0.45 \
+                else ROCK_LIGHT if light < 0.85 else ROCK_SHINE
             put(px, ox, oy, x, y, c)
 
 
