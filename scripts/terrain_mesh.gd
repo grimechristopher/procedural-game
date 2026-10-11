@@ -336,6 +336,11 @@ func _cell(c: Vector2i) -> void:
 	for q in GridWorld.DIAGONAL:
 		var p: Array = _piece(c, q)
 		var piece: int = p[0]
+		if raised and piece != Piece.CENTER and piece != Piece.JOINT and _only_banks(c, q, piece):
+			# Pokemon style: grass right up to a slope's edge (curving down
+			# into it), the rock all on the slope.
+			_add_lipped(_quarter(c, q, top, top_tex, false, true), c, q)
+			continue
 		if piece == Piece.OUTER and raised and _rounded(c, q):
 			_round_corner(c, q, top, base + Piece.OUTER)
 		elif piece == Piece.OUTER and raised:
@@ -388,6 +393,22 @@ func _is_bank(c: Vector2i, d: Vector2i) -> bool:
 	var n := c + d
 	var hn := _height(n)
 	return hn >= 0 and _height(c) - hn == 2 and world.get_cell_item(Vector3i(n.x, hn / 2, n.y)) == T.BANK
+
+
+## Whether every drop the quarter of c toward q shows a band for is a
+## bank (a slope), so the quarter can be plain ground.
+func _only_banks(c: Vector2i, q: Vector2i, piece: int) -> bool:
+	var sx := Vector2i(q.x, 0)
+	var sz := Vector2i(0, q.y)
+	if piece == Piece.INNER:
+		return _has_bank(c + q)
+	var any := false
+	for side in [sx, sz]:
+		if _is_exposed(c, side):
+			if not _is_bank(c, side):
+				return false
+			any = true
+	return any
 
 
 ## Rule: a bank's slope starts a little in from the cliff's edge, HGSS
@@ -485,6 +506,7 @@ func _bank_corners(c: Vector2i) -> Array:
 	var hb := _height(c)
 	var out := []
 	var cliffy := _cliffy(c)
+	var beside_cut := false
 	for k in CORNERS:
 		var p: Vector2 = Vector2(c) + k
 		var y := hb / 2.0
@@ -497,6 +519,7 @@ func _bank_corners(c: Vector2i) -> Array:
 			if kn == Kind.WEDGE:
 				var sn := Vector2(world._corner_dir(n, (hb + 1) / 2))
 				if p.is_equal_approx(Vector2(n.x + 0.5, n.y + 0.5) - sn * 0.5):
+					beside_cut = true
 					continue
 				lipped = lipped or _sloped_wedge(n)
 			elif kn != Kind.BLOCK:
@@ -506,7 +529,7 @@ func _bank_corners(c: Vector2i) -> Array:
 			cliffy = cliffy or _cliffy(n)
 		# (Dipped to meet a lipped edge above it, see _add_lipped.)
 		out.append(y - LIP if lipped and y > hb / 2.0 else y)
-	return [out, cliffy]
+	return [out, cliffy, beside_cut]
 
 ## The cell's corners, NW, NE, SE, SW, as offsets from its north-west corner.
 const CORNERS := [Vector2(0, 0), Vector2(1, 0), Vector2(1, 1), Vector2(0, 1)]
@@ -527,11 +550,19 @@ func _bank_cell(c: Vector2i) -> void:
 	var pts := []
 	for k in 4:
 		pts.append(Vector3(c.x + CORNERS[k].x, ys[k], c.y + CORNERS[k].y))
-	var tris: Array
-	if ys[0] + ys[2] <= ys[1] + ys[3]:
-		tris = [[0, 1, 2], [0, 2, 3]]
-	else:
-		tris = [[0, 1, 3], [1, 2, 3]]
+	# Split along the diagonal through the corner that differs from the
+	# other three: a hip down an outside corner (both halves sloping, as on
+	# a pyramid), a valley in an inside one. Beside a diagonal cut, the
+	# other way, so the slope ends on the diagonal and the rest is flat.
+	var tris: Array = [[0, 1, 2], [0, 2, 3]]
+	for k in 4:
+		var others: Array = [ys[(k + 1) % 4], ys[(k + 2) % 4], ys[(k + 3) % 4]]
+		if is_equal_approx(others[0], others[1]) and is_equal_approx(others[1], others[2]) \
+				and not is_equal_approx(ys[k], others[0]):
+			var through := k % 2 == 0
+			if r[2] and ys[k] > others[0]:
+				through = not through
+			tris = [[0, 1, 2], [0, 2, 3]] if through else [[0, 1, 3], [1, 2, 3]]
 	for t in tris:
 		var tri := [pts[t[0]], pts[t[1]], pts[t[2]]]
 		if tri[0].y <= floor_y and tri[1].y <= floor_y and tri[2].y <= floor_y:
@@ -676,10 +707,15 @@ func _wedge(c: Vector2i) -> void:
 	var diag: int = GridWorld.Tex.CLIFF_DIAG if _cliffy(c) else GridWorld.Tex.EARTH_DIAG
 	if _rocky(h):
 		diag = GridWorld.Tex.ROCK_DIAG
+	if _sloped_wedge(c):
+		diag = top_tex if not _rocky(h) else GridWorld.Tex.ROCK_TOP
 	var tri := [solid_corner, p0, p1]
 	var tri_uvs := []
 	for p in tri:
-		tri_uvs.append(Vector2(0.5 + (p.x - center.x) * -s.x, 0.5 + (p.y - center.y) * -s.y))
+		if _sloped_wedge(c):
+			tri_uvs.append(p)
+		else:
+			tri_uvs.append(Vector2(0.5 + (p.x - center.x) * -s.x, 0.5 + (p.y - center.y) * -s.y))
 	# Out to the face, which stands a hair past the diagonal.
 	var reach := -s.normalized() * FACE_OFFSET
 	faces.append([[_at(tri[0], top), _at(tri[1] + reach, top), _at(tri[2] + reach, top)], Vector3.UP, diag, tri_uvs])
