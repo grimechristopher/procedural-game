@@ -32,6 +32,8 @@ const HIDDEN := [
 const SLOPE_RUN := 0.7
 ## Pieces each sloping cell is split into each way.
 const STEPS := 7
+## Where a diagonal cut crosses a cut cell's sides, from its solid corner.
+const CUT_INSET := 0.5
 
 const GRASS := Color(0.45, 0.66, 0.30)
 const SLOPE := Color(0.62, 0.43, 0.26)
@@ -49,6 +51,9 @@ var size: Vector2i
 var heights: PackedInt32Array  # blocks; -1 is water
 ## Per cell: the diagonal toward its cut-off corner (ZERO if not cut).
 var cuts: Array[Vector2i] = []
+## Cells behind a diagonal cut whose corner pokes past the cut line (it runs
+## CUT_INSET into the cut cells): the diagonal toward that corner, or ZERO.
+var clips: Array[Vector2i] = []
 ## Ramp cells: { cell: { up, part } }, part 1 the upper cell, 0 the lower.
 var ramps := {}
 var verts := PackedVector3Array()
@@ -68,6 +73,10 @@ static func make(heights_blocks: PackedInt32Array, map_size: Vector2i, ramp_tops
 	for z in map_size.y:
 		for x in map_size.x:
 			t.cuts[z * map_size.x + x] = t._cut(Vector2i(x, z))
+	t.clips.resize(map_size.x * map_size.y)
+	for z in map_size.y:
+		for x in map_size.x:
+			t.clips[z * map_size.x + x] = t._clip(Vector2i(x, z))
 	for top in ramp_tops:
 		var up: Vector2i = ramp_tops[top]
 		t.ramps[top] = { up = up, part = 1, len = 2 }
@@ -76,6 +85,7 @@ static func make(heights_blocks: PackedInt32Array, map_size: Vector2i, ramp_tops
 		t.ramps[c] = { up = stairs[c], part = 0, len = 1 }
 	for c in t.ramps:
 		t.cuts[c.y * map_size.x + c.x] = Vector2i.ZERO
+		t.clips[c.y * map_size.x + c.x] = Vector2i.ZERO
 	return t
 
 
@@ -179,27 +189,107 @@ static func _square(c: Vector2i) -> Array:
 
 
 ## The parts of cell c with their ground level: the whole cell, or for a
-## cut cell its solid triangle and, at the lower ground's level, the cut-off
-## triangle.
+## cut cell its solid triangle and, at the lower ground's level, the rest
+## (in triangles).
 func _regions(c: Vector2i) -> Array:
 	var s := cuts[c.y * size.x + c.x]
 	if s == Vector2i.ZERO:
-		return [{ poly = _square(c), base = height(c) }]
+		var k := clips[c.y * size.x + c.x]
+		if k == Vector2i.ZERO:
+			return [{ poly = _square(c), base = height(c) }]
+		var pieces := _clip_pieces(c, k)
+		var out := []
+		for i in pieces.size() - 1:
+			out.append({ poly = pieces[i], base = height(c) })
+		out.append({ poly = pieces[-1], base = _clip_base(c, k) })
+		return out
 	var tri := _cut_triangles(c, s)
 	# (The lower of the two sides toward the cut: at a V's tip one of them
 	# is the other cell at the tip, as high as this one.)
 	var low := mini(height(c + Vector2i(s.x, 0)), height(c + Vector2i(0, s.y)))
-	return [{ poly = tri[0], base = height(c) }, { poly = tri[1], base = low }]
+	var out := [{ poly = tri[0], base = height(c) }]
+	for i in range(1, tri.size()):
+		out.append({ poly = tri[i], base = low })
+	return out
 
 
-## [solid triangle, cut-off triangle] of cell c cut toward diagonal s.
+## [solid triangle, then the cut-off rest as triangles] of cell c cut
+## toward diagonal s. The cut runs CUT_INSET of the way in from the solid
+## corner, not corner to corner, so the ledge along a diagonal slope is
+## centred on the cells you walk in rather than all off to one side.
 static func _cut_triangles(c: Vector2i, s: Vector2i) -> Array:
 	var o := Vector2(c)
 	var far := o + Vector2((1 + s.x) / 2, (1 + s.y) / 2)
 	var near := o + Vector2((1 - s.x) / 2, (1 - s.y) / 2)
 	var a := o + Vector2((1 + s.x) / 2, (1 - s.y) / 2)
 	var b := o + Vector2((1 - s.x) / 2, (1 + s.y) / 2)
-	return [[near, a, b], [far, b, a]]
+	var a2 := near.lerp(a, CUT_INSET)
+	var b2 := near.lerp(b, CUT_INSET)
+	# (Pieces gridded parallel to the cut, so slope creases come out straight.)
+	return [[near, a2, b2], [a2, a, b, b2], [far, a, b]]
+
+
+## The (convex) part of cell c at its own level.
+func _solid(c: Vector2i) -> Array:
+	var s := cuts[c.y * size.x + c.x]
+	if s != Vector2i.ZERO:
+		return _cut_triangles(c, s)[0]
+	var k := clips[c.y * size.x + c.x]
+	if k == Vector2i.ZERO:
+		return _square(c)
+	var p := _clip_pieces(c, k)
+	return [p[0][0], p[0][1], p[1][2], p[1][3], p[0][2]]
+
+
+## Whether c's corner toward a diagonal pokes past a cut line: the two
+## cells beside that corner are cut toward it (and as high as c), or at a
+## V's tip, one beside it is and the diagonal is its mirror image.
+func _clip(c: Vector2i) -> Vector2i:
+	if cuts[c.y * size.x + c.x] != Vector2i.ZERO:
+		return Vector2i.ZERO
+	var h := height(c)
+	for s: Vector2i in DIAG:
+		var sx: Vector2i = c + Vector2i(s.x, 0)
+		var sz: Vector2i = c + Vector2i(0, s.y)
+		if height(sx) != h or height(sz) != h:
+			continue
+		var cx := _cut_at(sx)
+		var cz := _cut_at(sz)
+		if cx == s and cz == s and height(c + s) < h:
+			return s
+		if cz == s and _cut_at(c + s) == Vector2i(-s.x, s.y):
+			return s
+		if cx == s and _cut_at(c + s) == Vector2i(s.x, -s.y):
+			return s
+	return Vector2i.ZERO
+
+
+func _cut_at(c: Vector2i) -> Vector2i:
+	if height(c) == -99:
+		return Vector2i.ZERO
+	return cuts[c.y * size.x + c.x]
+
+
+## The level of clipped cell c's clipped-off corner (toward k): the lower
+## ground there (past the twin cell, at a V's tip).
+func _clip_base(c: Vector2i, k: Vector2i) -> int:
+	var low := height(c + k)
+	if low >= height(c):
+		low = mini(height(c + k + Vector2i(0, k.y)), height(c + k + Vector2i(k.x, 0)))
+	return low
+
+
+## A clipped cell (see _clip) in triangles: the solid part, then last the
+## clipped-off corner.
+static func _clip_pieces(c: Vector2i, s: Vector2i) -> Array:
+	var o := Vector2(c)
+	var far := o + Vector2((1 + s.x) / 2, (1 + s.y) / 2)
+	var near := o + Vector2((1 - s.x) / 2, (1 - s.y) / 2)
+	var a := o + Vector2((1 + s.x) / 2, (1 - s.y) / 2)
+	var b := o + Vector2((1 - s.x) / 2, (1 + s.y) / 2)
+	var a3 := far.lerp(a, 1.0 - CUT_INSET)
+	var b3 := far.lerp(b, 1.0 - CUT_INSET)
+	return [[near, a, b], [b, a, a3, b3], [far, b3, a3]]
 
 
 ## The solid ground near c (its 3x3 neighbourhood): each cell's solid part
@@ -211,8 +301,7 @@ func _solids_near(c: Vector2i) -> Array:
 			var n := c + Vector2i(dx, dz)
 			if height(n) < 0:
 				continue
-			var s := cuts[n.y * size.x + n.x]
-			out.append({ poly = _square(n) if s == Vector2i.ZERO else _cut_triangles(n, s)[0], level = height(n) })
+			out.append({ poly = _solid(n), level = height(n) })
 	return out
 
 

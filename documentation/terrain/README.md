@@ -14,10 +14,13 @@ Every cell is a whole number of blocks high.
   far side of its own cell and leaves a strip of flat ground.
 - Measured from a corner, that distance runs round in a curve, so outer
   corners are rounded.
-- Along a 45-degree edge, the higher cells are cut along their diagonal and
-  the slope runs straight out from the cut, as steep as a straight slope. At
-  a V, where two such edges meet, the two cells at its tip are cut as mirror
-  images.
+- Along a 45-degree edge, the higher cells are cut diagonally and the slope
+  runs straight out from the cut, as steep as a straight slope. At a V, where
+  two such edges meet, the two cells at its tip are cut as mirror images.
+- The cut runs halfway in from the solid corner, not corner to corner. Cells
+  behind it whose corners would poke past the line are clipped to match.
+  This centres the ledge along a diagonal slope on the cells you walk in;
+  cutting corner to corner put you right at the foot of the slope above.
 - Anything taller than a block is a vertical wall.
 - Neighbouring cells measure from the same edges, so pieces always meet.
 
