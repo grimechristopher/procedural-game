@@ -37,6 +37,7 @@ const GRASS := Color(0.45, 0.66, 0.30)
 const SLOPE := Color(0.62, 0.43, 0.26)
 const WALL := Color(0.55, 0.52, 0.48)
 const WATER := Color(0.25, 0.45, 0.80)
+const PATH := Color(0.80, 0.68, 0.45)
 ## Where the water's surface sits, and the floor under it, in blocks.
 const WATER_LEVEL := -0.25
 const RIVER_BED := -1.0
@@ -48,15 +49,39 @@ var size: Vector2i
 var heights: PackedInt32Array  # blocks; -1 is water
 ## Per cell: the diagonal toward its cut-off corner (ZERO if not cut).
 var cuts: Array[Vector2i] = []
+## Ramp cells: { cell: { up, part } }, part 1 the upper cell, 0 the lower.
+var ramps := {}
 var verts := PackedVector3Array()
 var colors := PackedColorArray()
 
 
-## A mesh of the ground for heights in blocks (-1 for water), one per cell.
-static func build(heights_blocks: PackedInt32Array, map_size: Vector2i) -> MeshInstance3D:
+## The ground for heights in blocks (-1 for water), one per cell, with
+## ramps given as { cell: up direction } for the upper cell of each (the
+## slope cell at a step's foot; the ramp also takes the cell in front), and
+## stairs as { cell: up direction } for slope cells climbed in one go.
+## Answers questions about the ground (see Walking) once made.
+static func make(heights_blocks: PackedInt32Array, map_size: Vector2i, ramp_tops := {}, stairs := {}) -> TerrainShapes:
 	var t := TerrainShapes.new()
 	t.size = map_size
 	t.heights = heights_blocks
+	t.cuts.resize(map_size.x * map_size.y)
+	for z in map_size.y:
+		for x in map_size.x:
+			t.cuts[z * map_size.x + x] = t._cut(Vector2i(x, z))
+	for top in ramp_tops:
+		var up: Vector2i = ramp_tops[top]
+		t.ramps[top] = { up = up, part = 1, len = 2 }
+		t.ramps[top - up] = { up = up, part = 0, len = 2 }
+	for c in stairs:
+		t.ramps[c] = { up = stairs[c], part = 0, len = 1 }
+	for c in t.ramps:
+		t.cuts[c.y * map_size.x + c.x] = Vector2i.ZERO
+	return t
+
+
+## A mesh of the ground (see make).
+static func build(heights_blocks: PackedInt32Array, map_size: Vector2i, ramp_tops := {}, stairs := {}) -> MeshInstance3D:
+	var t := make(heights_blocks, map_size, ramp_tops, stairs)
 	t._run()
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
@@ -83,18 +108,17 @@ func height(c: Vector2i) -> int:
 
 
 func _run() -> void:
-	cuts.resize(size.x * size.y)
-	for z in size.y:
-		for x in size.x:
-			cuts[z * size.x + x] = _cut(Vector2i(x, z))
 	for z in size.y:
 		for x in size.x:
 			var c := Vector2i(x, z)
 			if height(c) < 0:
 				_water(c)
 				continue
-			for r in _regions(c):
-				_surface(r.poly, r.base)
+			if ramps.has(c):
+				_ramp(c)
+			else:
+				for r in _regions(c):
+					_surface(r.poly, r.base)
 			_walls(c)
 
 
@@ -204,6 +228,34 @@ func ground_at(p: Vector2, base: int, solids: Array) -> float:
 		if d < SLOPE_RUN:
 			rise = maxf(rise, 1.0 - d / SLOPE_RUN)
 	return base + rise
+
+
+## The ground's height at point p, in cell c.
+func ground(c: Vector2i, p: Vector2) -> float:
+	if ramps.has(c):
+		return _ramp_height(c, p)
+	var best := INF
+	var inside := 0.0
+	for r in _regions(c):
+		var d := _distance(p, r.poly)
+		if d < best:
+			best = d
+			inside = ground_at(p, r.base, _solids_near(c))
+	return inside
+
+
+## A ramp climbs half a block across each of its two cells; stairs climb a
+## whole block across their one.
+func _ramp_height(c: Vector2i, p: Vector2) -> float:
+	var r: Dictionary = ramps[c]
+	return height(c) + (r.part + _ramp_t(c, p)) / float(r.len)
+
+
+## How far across ramp cell c point p is, from its low side (0) to its high
+## side (1).
+func _ramp_t(c: Vector2i, p: Vector2) -> float:
+	var up := Vector2(ramps[c].up)
+	return clampf((p - Vector2(c.x + 0.5, c.y + 0.5)).dot(up) + 0.5, 0.0, 1.0)
 
 
 ## Distance from p to a convex polygon (0 inside).
@@ -329,8 +381,14 @@ func _walls(c: Vector2i) -> void:
 			var pts := []
 			for k in STEPS + 1:
 				var p: Vector2 = a.lerp(b, float(k) / STEPS)
-				var top := ground_at(p, r.base, solids)
-				var low := RIVER_BED if other_base == -99 else ground_at(p, other_base, other_solids)
+				var top := _ramp_height(c, p) if ramps.has(c) else ground_at(p, r.base, solids)
+				var low: float
+				if other_base == -99:
+					low = RIVER_BED
+				elif ramps.has(n) and n != c:
+					low = _ramp_height(n, p)
+				else:
+					low = ground_at(p, other_base, other_solids)
 				pts.append([p, top, low])
 			for k in STEPS:
 				var p0: Array = pts[k]
@@ -340,6 +398,29 @@ func _walls(c: Vector2i) -> void:
 				var n3 := Vector3(out.x, 0, out.y)
 				_add(_at(p0[0], p0[1]), _at(p1[0], p1[1]), _at(p1[0], minf(p1[2], p1[1])), _shade(WALL, n3))
 				_add(_at(p0[0], p0[1]), _at(p1[0], minf(p1[2], p1[1])), _at(p0[0], minf(p0[2], p0[1])), _shade(WALL, n3))
+
+
+## A ramp cell: a plane climbing across it, path-coloured; stairs get
+## alternating bands so they read as steps.
+func _ramp(c: Vector2i) -> void:
+	var r: Dictionary = ramps[c]
+	var bands := 4 if r.len == 1 else 1
+	var up := Vector2(r.up)
+	var across := Vector2(-up.y, up.x)
+	var mid := Vector2(c.x + 0.5, c.y + 0.5)
+	for k in bands:
+		var t0 := float(k) / bands
+		var t1 := float(k + 1) / bands
+		var q := []
+		for corner in [[t0, -1], [t0, 1], [t1, 1], [t1, -1]]:
+			var p: Vector2 = mid + up * (corner[0] - 0.5) + across * 0.5 * corner[1]
+			q.append(_at(p, _ramp_height(c, p)))
+		var col := PATH if k % 2 == 0 else PATH.darkened(0.12)
+		for t in [[0, 1, 2], [0, 2, 3]]:
+			var n: Vector3 = (q[t[1]] - q[t[0]]).cross(q[t[2]] - q[t[0]])
+			if n.y < 0.0:
+				n = -n
+			_add(q[t[0]], q[t[1]], q[t[2]], _shade(col, n))
 
 
 func _water(c: Vector2i) -> void:
@@ -375,3 +456,67 @@ func _shade(col: Color, n: Vector3) -> Color:
 func _add(a: Vector3, b: Vector3, c: Vector3, col: Color) -> void:
 	verts.append_array([a, b, c])
 	colors.append_array([col, col, col])
+
+
+# --- Walking -----------------------------------------------------------------
+
+## Whether you can stand in cell c: flat ground at its own level (not a
+## slope, a cut diagonal or water), or a ramp.
+func walkable(c: Vector2i) -> bool:
+	var h := height(c)
+	if h < 0:
+		return false
+	if ramps.has(c):
+		return true
+	if cuts[c.y * size.x + c.x] != Vector2i.ZERO:
+		return false
+	var mid := Vector2(c.x + 0.5, c.y + 0.5)
+	return absf(ground_at(mid, h, _solids_near(c)) - h) < 0.001
+
+
+## Height of the ground where you'd cross c's side toward d, or NAN if you
+## can't cross it (a ramp's sides).
+func edge_height(c: Vector2i, d: Vector2i) -> float:
+	if ramps.has(c):
+		var r: Dictionary = ramps[c]
+		if d == r.up:
+			return height(c) + (r.part + 1) / float(r.len)
+		if d == -r.up:
+			return height(c) + r.part / float(r.len)
+		return NAN
+	return float(height(c))
+
+
+## Whether you can step from c toward d (one of the eight directions).
+## Straight: both cells walkable and the ground meeting at the same height.
+## Diagonal: both flat at the same level, and nothing in the way at the
+## corner between them (no higher ground's solid corner; the foot of a
+## diagonal slope is fine).
+func can_step(c: Vector2i, d: Vector2i) -> bool:
+	var n := c + d
+	if not walkable(c) or not walkable(n):
+		return false
+	if d.x == 0 or d.y == 0:
+		var a := edge_height(c, d)
+		var b := edge_height(n, -d)
+		return not is_nan(a) and not is_nan(b) and is_equal_approx(a, b)
+	var h := height(c)
+	if ramps.has(c) or ramps.has(n) or height(n) != h:
+		return false
+	var corner := Vector2(c.x + 0.5, c.y + 0.5) + Vector2(d) * 0.5
+	for side in [c + Vector2i(d.x, 0), c + Vector2i(0, d.y)]:
+		var hs := height(side)
+		if hs == -99 or ramps.has(side):
+			return false
+		if hs <= h:
+			continue
+		# Higher: only a diagonal cut whose cut-off part (at this level)
+		# reaches the corner lets you by.
+		var s := cuts[side.y * size.x + side.x]
+		if s == Vector2i.ZERO:
+			return false
+		var low := mini(height(side + Vector2i(s.x, 0)), height(side + Vector2i(0, s.y)))
+		var near := Vector2(side) + Vector2((1 - s.x) / 2, (1 - s.y) / 2)
+		if low != h or corner.is_equal_approx(near):
+			return false
+	return true

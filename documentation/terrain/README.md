@@ -27,3 +27,12 @@ Grass green on flat ground only, brown on slopes, grey on vertical walls,
 blue water. Faces are shaded by which way they face.
 
 Code: `scripts/terrain_shapes.gd`. Demo: `sidecar/tools/basics.gd`.
+
+## Walking
+
+- **Standing:** a cell is walkable when its centre is flat at its own level. Slopes, cut diagonals and water aren't walkable; ramps and stairs are.
+- **Straight steps:** both cells must be walkable, and the ground must meet at the same height on the shared side. A ramp or stairs can only be entered from its low side or its high side, never from its sides.
+- **Diagonal steps:** both cells must be flat (not a ramp) at the same level. Each of the two cells beside the step must be no higher, or be a cut diagonal whose cut-off part (at this level) reaches the shared corner. This lets you walk the one-cell ring along a 45-degree slope.
+- **Stairs:** a slope cell climbed in one go, one block over one cell. They fit one-wide ledges, so a mound can be climbed level by level.
+- **Ramps:** two cells, half a block each. A ramp takes a flat cell in front of the slope, so it's only used where there's room.
+- **Code:** `TerrainShapes.make()` answers `walkable`, `can_step` and `ground` (the height under any point, for placing the character).
