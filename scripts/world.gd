@@ -617,20 +617,20 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 			continue
 		if sloped:
 			# Sloped cliffs: only a diagonal between two slopes a block high
-			# (the slope then runs on along the diagonal, see TerrainMesh),
-			# and only on a 45-degree run of them: a shallower edge stays
-			# stepped, its corners wrapped round, as HGSS draws it.
+			# (the slope then runs on along the diagonal, see TerrainMesh).
 			var bits := (1 << ORTHOGONAL.find(a)) | (1 << ORTHOGONAL.find(b))
 			if sloped & bits != bits or h - low != 2:
 				continue
-			var run := false
-			for along: Vector2i in [Vector2i(d.x, -d.y), Vector2i(-d.x, d.y)]:
-				var n := cell + along
-				if _height_at(heights, n) == h and _height_at(heights, n + a) == low \
-						and _height_at(heights, n + b) == low:
-					run = true
-			if not run:
-				continue
+		# Only on a 45-degree run of such corners: a lone square corner stays
+		# square (slightly rounded), as HGSS draws it.
+		var run := false
+		for along: Vector2i in [Vector2i(d.x, -d.y), Vector2i(-d.x, d.y)]:
+			var n := cell + along
+			if _height_at(heights, n) == h and _height_at(heights, n + a) == low \
+					and _height_at(heights, n + b) == low:
+				run = true
+		if not run:
+			continue
 		# Level plateau behind (or, within a slope's staircase, plateau or
 		# more slope rising behind it).
 		var behind := [_height_at(heights, cell - a), _height_at(heights, cell - b), _height_at(heights, cell - d)]
@@ -638,7 +638,8 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 		# (On a slope, the cell diagonally behind may rise higher still.)
 		if sloped and behind[0] == h and behind[1] == h and behind[2] > h:
 			behind[2] = h
-		if behind.all(func(hb: int) -> bool: return hb == h or (within and hb > h)):
+		# (Vertical walls: higher ground behind is just the next wall up.)
+		if behind.all(func(hb: int) -> bool: return hb == h or ((within or not sloped) and hb > h)):
 			_wedge_column(cell, low, h, -d)
 			return
 
@@ -699,16 +700,18 @@ func _check_wedges(heights: PackedInt32Array) -> void:
 ## exactly two cells wide.
 func _wedge_notch(cell: Vector2i, heights: PackedInt32Array, sloped: int) -> void:
 	var h := _height_at(heights, cell)
-	if h < 2 or sloped == 0 or _is_wedge(get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y))):
+	if h < 2 or _is_wedge(get_cell_item(Vector3i(cell.x, (h - 1) / 2, cell.y))):
 		return
 	for d in ORTHOGONAL:
-		if _height_at(heights, cell + d) != h - 2:
+		var low := _height_at(heights, cell + d)
+		# (A block down to a slope; any whole blocks down to a sheer wall.)
+		if low < 0 or low >= h or (h - low) % 2 == 1 or (sloped != 0 and h - low != 2):
 			continue
 		for e: Vector2i in [Vector2i(d.y, d.x), Vector2i(-d.y, -d.x)]:
-			if _height_at(heights, cell + d + e) == h - 2 and _height_at(heights, cell + e) == h \
+			if _height_at(heights, cell + d + e) == low and _height_at(heights, cell + e) == h \
 					and _height_at(heights, cell - e) == h and _height_at(heights, cell + d - e) == h \
 					and _height_at(heights, cell + e + e) == h and _height_at(heights, cell + d + e + e) == h:
-				_wedge_column(cell, h - 2, h, -(d + e))
+				_wedge_column(cell, low, h, -(d + e))
 				return
 
 
