@@ -175,7 +175,8 @@ const MAX_HEIGHT := 10
 const ROCK_LEVEL := 5
 ## Chance a usable cliff step gets a ramp up it, before the connectivity pass.
 const RAMP_CHANCE := 0.03
-## Unreachable pockets this small (cells) get levelled if no ramp fits.
+## Unreachable pockets this small (cells) get levelled if no ramp fits
+## (and up to twice this, once nothing else will join).
 const SMALL_POCKET := 30
 const ORTHOGONAL: Array[Vector2i] = [Vector2i.UP, Vector2i.DOWN, Vector2i.LEFT, Vector2i.RIGHT]
 const DIAGONAL: Array[Vector2i] = [Vector2i(1, 1), Vector2i(1, -1), Vector2i(-1, 1), Vector2i(-1, -1)]
@@ -196,6 +197,9 @@ var _corridor_walls := 2
 ## Per cell, a bit per ORTHOGONAL side whose full cliff slopes (banks) rather
 ## than standing vertical.
 var _slope_sides := PackedByteArray()
+## Cells _slope_walls raised into a slope's staircase (all slope, no ground
+## to walk on).
+var _raised := PackedByteArray()
 ## Leaves terrain blocks undrawn in the GridMap, for TerrainMesh to draw.
 ## (Off for hand-built test maps, which have no terrain mesh.)
 @export var hide_terrain_blocks := true
@@ -247,9 +251,8 @@ func generate(new_seed: int) -> void:
 		for z in range(spawn_cell.y - 1, spawn_cell.y + 2):
 			set_cell_item(Vector3i(x, GROUND_LAYER, z), Tile.PLAZA)
 	_place_scenery(terrain, heights, reserved)
+	_smooth_fins(heights, reserved)
 	_connect_everything(heights, reserved)
-	if _smooth_fins(heights, reserved) > 0:
-		_connect_everything(heights, reserved)
 	_bury_covered_blocks()
 	height_map = heights
 	_edges = TerrainMesh.build(self, heights, terrain)
@@ -448,6 +451,8 @@ func _build_terrain(terrain: Terrain, heights: PackedInt32Array) -> void:
 func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 	_slope_sides.resize(map_size.x * map_size.y)
 	_slope_sides.fill(0)
+	_raised.resize(map_size.x * map_size.y)
+	_raised.fill(0)
 	var settled := SETTLEMENT_RADIUS + 2.0
 	for z in map_size.y:
 		for x in map_size.x:
@@ -505,6 +510,7 @@ func _slope_walls(terrain: Terrain, heights: PackedInt32Array) -> void:
 						sides |= bits
 				if best > f:
 					heights[i] = best
+					_raised[i] = 1
 					_slope_sides[i] = sides
 					_max_drop[i] = maxi(_max_drop[i], 2)
 					changed = true
@@ -583,8 +589,11 @@ func _wedge_corner(cell: Vector2i, heights: PackedInt32Array, sloped := 0) -> vo
 			var bits := (1 << ORTHOGONAL.find(a)) | (1 << ORTHOGONAL.find(b))
 			if sloped & bits != bits or h - low != 2:
 				continue
-		if _height_at(heights, cell - a) == h and _height_at(heights, cell - b) == h \
-				and _height_at(heights, cell - d) == h:
+		# Level plateau behind (or, within a slope's staircase, plateau or
+		# more slope rising behind it).
+		var behind := [_height_at(heights, cell - a), _height_at(heights, cell - b), _height_at(heights, cell - d)]
+		var within := sloped and _raised[cell.y * map_size.x + cell.x] == 1
+		if behind.all(func(hb: int) -> bool: return hb == h or (within and hb > h)):
 			_wedge_column(cell, low, h, -d)
 			return
 
@@ -708,7 +717,10 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 	for z in map_size.y:
 		for x in map_size.x:
 			surface[z * map_size.x + x] = _top_surface(Vector2i(x, z))
+	var level_limit := SMALL_POCKET
 	for attempt in 40:
+		if attempt == 30:
+			level_limit = SMALL_POCKET * 2
 		var reached := _reach(surface, PackedByteArray(), spawn_cell)
 		var pockets := _label_pockets(surface, reached)
 		var members := {}
@@ -741,7 +753,13 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 							break
 				if done:
 					break
-			if not done and cells.size() <= SMALL_POCKET:
+			if not done:
+				# Last, take a bank away, to climb the cliff behind it next time.
+				for cell in cells:
+					if _join(cell, reached, surface, heights, reserved, true, true):
+						done = true
+						break
+			if not done and cells.size() <= level_limit:
 				done = _level_pocket(cells, reached, surface, heights, reserved)
 			if done:
 				joined += 1
@@ -749,7 +767,11 @@ func _connect_everything(heights: PackedInt32Array, reserved: Dictionary) -> voi
 				# its own way in.
 				_grow_reach(surface, reached, cells)
 		if joined == 0:
-			return
+			if level_limit > SMALL_POCKET:
+				return
+			# Stuck (or nearly out of tries, above): level somewhat bigger
+			# pockets too, as a last resort.
+			level_limit = SMALL_POCKET * 2
 
 
 ## The highest surface in a column (terrain has one per column), found
@@ -811,6 +833,15 @@ func _grow_reach(surface: Array, reached: PackedByteArray, around: Array) -> voi
 			if not is_nan(e) and is_equal_approx(_edge(surface[i], -d), e):
 				reached[i] = 1
 				frontier.append(n)
+
+
+## Whether you can walk from cell c to its neighbour toward d.
+func _links(surface: Array, c: Vector2i, d: Vector2i) -> bool:
+	var n := c + d
+	if n.x < 0 or n.y < 0 or n.x >= map_size.x or n.y >= map_size.y:
+		return false
+	var e := _edge(surface[c.y * map_size.x + c.x], d)
+	return not is_nan(e) and is_equal_approx(_edge(surface[n.y * map_size.x + n.x], -d), e)
 
 
 ## Numbers the separate pockets of walkable ground that weren't reached
@@ -920,9 +951,10 @@ func _unshape(cell: Vector2i, heights: PackedInt32Array) -> void:
 ## Joins the pocket containing u to reachable ground next to it, if it
 ## can: a ramp up or down a half or whole block, or clearing a tree or rock
 ## between u and reachable ground at the same level; with `cut`, also a
-## corridor up a taller wall.
+## corridor up a taller wall; with `peel`, also taking away a bank that's
+## in the way.
 func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: PackedInt32Array,
-		reserved: Dictionary, cut := false) -> bool:
+		reserved: Dictionary, cut := false, peel := false) -> bool:
 	var hu := _height_at(heights, u)
 	for d in ORTHOGONAL:
 		var r := u + d
@@ -943,7 +975,7 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 					dir = -d
 				if dir != Vector2i.ZERO and _place_ramp(_ramp_pieces(r, dir, heights, reserved), dir, surface):
 					return true
-			if hu == hr:
+			if hu == hr and peel:
 				# No ramp fits: take the bank away, so u's ground reaches the
 				# cliff (which turns vertical there) and can climb it next time.
 				set_cell_item(Vector3i(r.x, hr / 2, r.y), INVALID_CELL_ITEM)
@@ -963,16 +995,29 @@ func _join(u: Vector2i, reached: PackedByteArray, surface: Array, heights: Packe
 			if _cut_ramps(low, dir, heights, reserved, surface):
 				return true
 		elif not reached[ri] and hr == hu and surface[ri].is_empty() and not reserved.has(r):
-			# r is blocked; clear it if reachable ground at our level lies beyond.
+			# r is blocked (by a tree or rock, or cut into a wedge); clear it if
+			# reachable ground at our level lies beyond.
 			var prop_at := Vector3i(r.x, (hr + 1) / 2, r.y)
-			if get_cell_item(prop_at) not in CLEARABLE:
+			var wedge_at := Vector3i(r.x, (hr - 1) / 2, r.y)
+			var wedged := hr > 0 and _is_wedge(get_cell_item(wedge_at))
+			if get_cell_item(prop_at) not in CLEARABLE and not wedged:
 				continue
 			for d2 in ORTHOGONAL:
 				var b := r + d2
 				if _height_at(heights, b) == hu and reached[b.y * map_size.x + b.x] and not surface[b.y * map_size.x + b.x].is_empty():
-					set_cell_item(prop_at, INVALID_CELL_ITEM)
+					# Only if it then really links u through r to b.
+					var prop := get_cell_item(prop_at)
+					var prop_basis := get_cell_item_orientation(prop_at)
+					if wedged:
+						_unshape(r, heights)
+					else:
+						set_cell_item(prop_at, INVALID_CELL_ITEM)
 					surface[ri] = _top_surface(r)
-					return true
+					if _links(surface, u, d) and _links(surface, r, d2):
+						return true
+					if not wedged:
+						set_cell_item(prop_at, prop, prop_basis)
+						surface[ri] = _top_surface(r)
 	return false
 
 
@@ -986,7 +1031,7 @@ func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, sur
 	var r := u + d
 	var hr := _height_at(heights, r)
 	# Walk the staircase to its far end, up or down.
-	var step := -2 if hu == hr + 2 else (2 if hu == hr else 0)
+	var step := -2 if hu == hr + 2 else (2 if hu <= hr else 0)
 	if step == 0:
 		return false
 	var banks: Array[Vector2i] = []
@@ -1005,12 +1050,16 @@ func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, sur
 	var h_top := _height_at(heights, top)
 	if step > 0 and h_top != _height_at(heights, banks[-1]) + 2:
 		return false
-	var floor_h := h_top - 2 * k
+	# Down to the ground past the banks (the slope may end in a step).
+	var floor_h := _height_at(heights, top + down * (k + 1))
+	if floor_h < 0 or floor_h > h_top - 2 * k:
+		return false
+	var steps := h_top - floor_h
 	var run: Array[Vector2i] = []
-	for j in range(1, 2 * k + 1):
+	for j in range(1, steps + 1):
 		run.append(top + down * j)
-	var landing: Vector2i = top + down * (2 * k + 1)
-	for j in range(k, 2 * k):
+	var landing: Vector2i = top + down * (steps + 1)
+	for j in range(k, steps):
 		var f: Vector2i = run[j]
 		if _height_at(heights, f) != floor_h or not _ramp_room(f, floor_h / 2, floor_h, reserved) \
 				or _ramp_near_cell(f):
@@ -1019,7 +1068,7 @@ func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, sur
 		return false
 	if not reached[top.y * map_size.x + top.x] and not reached[landing.y * map_size.x + landing.x]:
 		return false
-	for j in 2 * k:
+	for j in steps:
 		var f: Vector2i = run[j]
 		var s := h_top - (j + 1)
 		for layer in range(0, TOP_LAYER + 1):
@@ -1027,7 +1076,7 @@ func _ramp_through_slope(u: Vector2i, d: Vector2i, reached: PackedByteArray, sur
 		_stack_column(f, s)
 		heights[f.y * map_size.x + f.x] = s
 		set_slope(f, s / 2, Tile.HALF_HILL_RAMP if s % 2 == 0 else Tile.UPPER_HALF_HILL_RAMP, -down)
-	for j in range(-1, 2 * k + 2):
+	for j in range(-1, steps + 2):
 		for side in [Vector2i(down.y, down.x), Vector2i(-down.y, -down.x), Vector2i.ZERO]:
 			var n: Vector2i = top + down * j + side
 			if _height_at(heights, n) < 0:
@@ -1114,7 +1163,7 @@ func _smooth_fins(heights: PackedInt32Array, reserved: Dictionary) -> int:
 		for x in range(1, map_size.x - 1):
 			var c := Vector2i(x, z)
 			var h := _height_at(heights, c)
-			if h < 0 or reserved.has(c) or _ramp_near_cell(c) or _has_bank(c, h):
+			if h < 0 or reserved.has(c) or _ramp_near(c) or _has_bank(c, h):
 				continue
 			for d: Vector2i in [Vector2i(1, 0), Vector2i(0, 1)]:
 				var a := _height_at(heights, c + d)

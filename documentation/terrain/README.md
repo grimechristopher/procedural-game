@@ -30,7 +30,8 @@ blocks.
   stacked and diagonal slopes all meet without seams, and a slope's end is
   closed down to the ground beside it. A plateau corner between two
   slopes is cut diagonally (a wedge, whose cut-off corner doesn't count),
-  so the slope runs on along the diagonal. Where there isn't room in front, the wall stays
+  so the slope runs on along the diagonal; within a tall slope's staircase
+  too, at every level (not on natural terraces, whose shelves are walked). Where there isn't room in front, the wall stays
   vertical.
 - Which sides slope: terraces a block at a time always do; elsewhere a
   wall-style noise decides, sloping every side in some places and only
@@ -52,15 +53,21 @@ blocks.
   its foot. A ramp can take the place of a bank, and a slope of several
   banks is climbed by a ramp laid down through it and on over its foot.
 - Every bit of land should be reachable; pockets that can't be joined are
-  levelled into the ground beside them (up to 30 cells).
+  levelled into the ground beside them (up to 30 cells, or 60 once nothing
+  else will join).
+- Joins go gentlest first: a ramp or clearing, then a corridor or a ramp
+  laid down through a slope (which may end in a step), then carving into
+  a cliff top, and only last taking a bank away. A clearing (a tree, a
+  rock, or a diagonal cut put back to a square block) only counts if it
+  really opens a way through.
 - Pockets are joined the gentlest way first (a ramp or clearing before a
   corridor), and each one joined counts as reachable straight away, so the
   pockets beside it join it instead of each cutting its own way in.
 - Corridors never run alongside or across another ramp, and keep plateau
   two cells deep either side (one where that's all there is), so they
   don't leave thin walls standing.
-- Afterwards, one-cell fins and slots left between cuts and levelled
-  pockets are smoothed to the ground either side.
+- Before joining, one-cell fins and slots are smoothed to the ground
+  either side (away from ramps).
 
 ## Edges (autotiling)
 
