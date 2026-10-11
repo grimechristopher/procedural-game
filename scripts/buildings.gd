@@ -66,6 +66,40 @@ static func inn() -> Dictionary:
 	return { name = "Inn", size = Vector2i(6, 4), door = 3, faces = faces }
 
 
+## A lumber mill by a river: an open shed (a plank deck on posts under a
+## shingle roof) with a saw bench and a log on it, a pile of logs at the
+## back, and a water wheel off its east end, over the water.
+static func mill() -> Dictionary:
+	var faces := []
+	faces += block(Vector3(0, 0, 0), Vector3(6, 0.3, 4), T.PLANKS, T.PLANKS)
+	for p: Vector2 in [Vector2(0.1, 0.1), Vector2(5.65, 0.1), Vector2(0.1, 3.65), Vector2(5.65, 3.65),
+			Vector2(2.9, 0.1), Vector2(2.9, 3.65)]:
+		faces += block(Vector3(p.x, 0.3, p.y), Vector3(p.x + 0.25, 2.3, p.y + 0.25), T.PLANKS, T.PLANKS)
+	# A low plank wall along the back.
+	faces += block(Vector3(0.1, 0.3, 0.1), Vector3(5.9, 1.1, 0.3), T.PLANKS, T.PLANKS)
+	faces += gable_roof(-0.15, -0.15, 6.15, 4.15, 2.3, 3.5, 0.35, T.SHINGLE, T.PLANKS)
+	# Saw bench, the blade, and a log on it.
+	faces += block(Vector3(1.6, 0.3, 1.6), Vector3(4.4, 0.85, 2.4), T.PLANKS, T.PLANKS)
+	faces += block(Vector3(3.0, 0.85, 1.7), Vector3(3.1, 1.6, 2.3), T.STONE, T.STONE)
+	faces += block(Vector3(0.9, 0.85, 1.85), Vector3(5.2, 1.2, 2.15), T.EARTH_SIDE, T.PLANKS)
+	# Logs piled at the back corner.
+	for i in 3:
+		for j in 3 - i:
+			var x0 := 0.4 + j * 0.42 + i * 0.21
+			faces += block(Vector3(x0, 0.3 + i * 0.36, 0.4), Vector3(x0 + 0.38, 0.66 + i * 0.36, 1.4),
+				T.EARTH_SIDE, T.PLANKS)
+	# The water wheel: a rim of paddles and two spokes, off the east end.
+	var hub := Vector3(6.45, 1.1, 2.0)
+	for k in 8:
+		var a := TAU * k / 8.0
+		var c := hub + Vector3(0, sin(a), cos(a)) * 1.05
+		faces += block(c - Vector3(0.18, 0.2, 0.2), c + Vector3(0.18, 0.2, 0.2), T.PLANKS, T.PLANKS)
+	faces += block(hub - Vector3(0.08, 1.0, 0.08), hub + Vector3(0.08, 1.0, 0.08), T.PLANKS, T.PLANKS)
+	faces += block(hub - Vector3(0.08, 0.08, 1.0), hub + Vector3(0.08, 0.08, 1.0), T.PLANKS, T.PLANKS)
+	faces += block(Vector3(6.0, 1.0, 1.9), Vector3(6.6, 1.2, 2.1), T.PLANKS, T.PLANKS)
+	return { name = "Mill", size = Vector2i(6, 4), door = 2, faces = faces }
+
+
 # --- Pieces -------------------------------------------------------------------
 
 ## A box's sides (and top, if given a tile). Wall tiles line up with the
