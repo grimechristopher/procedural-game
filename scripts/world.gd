@@ -127,6 +127,8 @@ enum Tex {
 	ROCK_EDGE, ROCK_OUTER, ROCK_INNER, ROCK_JOINT, ROCK_TEE, ROCK_DIAG,
 	# Contour lines laid over ramps, across the climb (see-through elsewhere).
 	SLOPE_LINES,
+	# The rock of slopes on high ground: rough chunks, not strata.
+	BANK_BOULDERS,
 }
 const TEX_COLS := 4
 const TEX_ROWS := 11

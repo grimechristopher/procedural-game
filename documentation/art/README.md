@@ -182,6 +182,12 @@ along the edge below a wavy grass fringe, and runs on down the face.
   `ROCK_DIAG`: the cliff pieces again for high ground, which is bare rock
   on top: same layout and band, but with `ROCK_TOP` where the grass would
   be and a fringe of loose, lighter rock instead of the grass fringe.
+- `BANK_BOULDERS`: the rock of banks on high ground (bare-rock tops, see
+  `ROCK_TOP`): big rough chunks of rock, as on HGSS's mountain banks and
+  cave walls, each lit along its top and left edges and shading down,
+  with dark cracks below and right of it; darker toward row 15, the foot.
+  Laid like `BANK_ROCK`. Keep the chunks irregular so it doesn't read as
+  brickwork.
 - `BANK_ROCK`: the rock of an HGSS-style bank, laid along the slope with
   its top edge (row 0) at the cliff's top and row 15 at the foot of the
   cell in front: fine strata running along the slope, lit near the top

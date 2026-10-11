@@ -430,11 +430,11 @@ func _bank_cell(c: Vector2i) -> void:
 	var r: Array = _bank_corners(c)
 	var ys: Array = r[0]
 	var floor_y := _height(c) / 2.0
-	var tex: int = GridWorld.Tex.BANK_ROCK if r[1] else GridWorld.Tex.EARTH_SIDE
-	var face_tex: int = GridWorld.Tex.DIRT if r[1] else GridWorld.Tex.EARTH_SIDE
 	var top: float = ys.max()
 	if top <= floor_y:
 		return
+	var tex: int = _slope_tex(r[1], top)
+	var face_tex: int = GridWorld.Tex.DIRT if r[1] else GridWorld.Tex.EARTH_SIDE
 	var pts := []
 	for k in 4:
 		pts.append(Vector3(c.x + CORNERS[k].x, ys[k], c.y + CORNERS[k].y))
@@ -451,6 +451,14 @@ func _bank_cell(c: Vector2i) -> void:
 	for e in 4:
 		var d: Vector2i = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)][e]
 		_bank_side(c, d, pts[e], pts[(e + 1) % 4], face_tex)
+
+
+## The texture of a slope topping out at `top` (blocks): earth on gentle
+## ground, rock strata on cliffs, and rough boulders on high ground.
+func _slope_tex(cliffy: bool, top: float) -> int:
+	if not cliffy:
+		return GridWorld.Tex.EARTH_SIDE
+	return GridWorld.Tex.BANK_BOULDERS if _rocky(roundi(top * 2.0)) else GridWorld.Tex.BANK_ROCK
 
 
 ## A sloped triangle of rock, its strata running along the slope's level
@@ -589,8 +597,7 @@ func _wedge(c: Vector2i) -> void:
 	if _has_bank(c - Vector2i(si.x, 0)) and _has_bank(c - Vector2i(0, si.y)):
 		# Between two slopes: the slope runs on along the diagonal, down to
 		# the cut-off corner.
-		_slope_tri([_at(p0, top), _at(p1, top), _at(open_corner, bottom)], top,
-			GridWorld.Tex.BANK_ROCK if _cliffy(c) else GridWorld.Tex.EARTH_SIDE)
+		_slope_tri([_at(p0, top), _at(p1, top), _at(open_corner, bottom)], top, _slope_tex(_cliffy(c), top))
 		return
 	if low > 0:
 		faces.append([[_at(open_corner, bottom), _at(p0, bottom), _at(p1, bottom)], Vector3.UP, top_tex,

@@ -100,7 +100,8 @@ tileset's cliff set does:
 4. Otherwise it's plain ground.
 
 High ground (five blocks up and more) is bare rock: its pieces are the
-rock versions, with no grass in them.
+rock versions, with no grass in them, and slopes topping out there are
+rough boulders rather than strata.
 
 Ramps take part like any other cell, their pieces draped over the slope,
 with contour lines across the climb so the slope reads as one. Where the

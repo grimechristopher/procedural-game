@@ -519,6 +519,50 @@ def bank_rock(px, ox, oy):
         put(px, ox, oy, x, y + 1, ROCK_DARK)
 
 
+# Boulders: the centres of rough chunks of rock; each pixel belongs to the
+# nearest (measured round the tile's edges, so it tiles, and squashed so
+# chunks come out wider than tall).
+BOULDERS = [(3, 2), (11, 3), (7, 8), (15, 10), (2, 13), (10, 14), (5, 5)]
+
+
+def _boulder_at(x, y):
+    best, pick = 1e9, 0
+    for k, (cx, cy) in enumerate(BOULDERS):
+        dx = min(abs(x - cx), T - abs(x - cx)) * 0.7
+        dy = min(abs(y - cy), T - abs(y - cy))
+        d = dx * dx + dy * dy
+        if d < best:
+            best, pick = d, k
+    return pick
+
+
+def bank_boulders(px, ox, oy):
+    """Mountain slopes: big rough chunks of rock, as on HGSS's cave walls
+    and mountain banks. Each chunk lit along its top and left edges and
+    shading toward its bottom, with dark cracks below and right of it;
+    darker toward the foot of the slope (row 15)."""
+    for x in range(T):
+        for y in range(T):
+            k = _boulder_at(x, y)
+            below = _boulder_at(x, (y + 1) % T)
+            right = _boulder_at((x + 1) % T, y)
+            above = _boulder_at(x, (y - 1) % T)
+            left = _boulder_at((x - 1) % T, y)
+            above2 = _boulder_at(x, (y - 2) % T)
+            if below != k or right != k:
+                c = ROCK_DARK
+            elif above != k or left != k:
+                c = ROCK_LIGHT
+            elif above2 != k:
+                c = ROCK
+            else:
+                below2 = _boulder_at(x, (y + 2) % T)
+                c = ROCK_MID if below2 != k else ROCK
+            if y >= 12 and c == ROCK:
+                c = ROCK_MID
+            put(px, ox, oy, x, y, c)
+
+
 GRASS_SLOPE_LINE = (100, 133, 66)
 
 
@@ -544,7 +588,7 @@ TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_w
          cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock,
          cliff_tee, earth_tee,
          rock_edge, rock_outer, rock_inner, rock_joint, rock_tee, rock_diag,
-         slope_lines]
+         slope_lines, bank_boulders]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()
