@@ -250,10 +250,11 @@ func _surface(poly: Array, base: int) -> void:
 				var p11: Vector2 = _lerp4(poly, float(i + 1) / STEPS, float(j + 1) / STEPS)
 				var p01: Vector2 = _lerp4(poly, float(i) / STEPS, float(j + 1) / STEPS)
 				var q := [p00, p10, p11, p01].map(func(p): return Vector3(p.x, ground_at(p, base, solids), p.y))
-				# Fold along whichever diagonal follows the slope's level
-				# lines (its ends nearer the same height), so a diagonal
-				# slope's foot doesn't come out jagged.
-				if absf(q[0].y - q[2].y) <= absf(q[1].y - q[3].y):
+				# Fold along whichever diagonal better matches the ground at
+				# the square's centre, so a diagonal slope's foot isn't jagged
+				# and an inside corner's crease has no flat bits in it.
+				var mid := ground_at((p00 + p11) / 2.0, base, solids)
+				if absf((q[0].y + q[2].y) / 2.0 - mid) <= absf((q[1].y + q[3].y) / 2.0 - mid):
 					_ground_tri(q[0], q[1], q[2])
 					_ground_tri(q[0], q[2], q[3])
 				else:
