@@ -231,6 +231,17 @@ func _level_with(n: Vector2i, c: Vector2i) -> bool:
 		and is_equal_approx(ramps[n].base + ramps[n].rise, _height(c) / 2.0)
 
 
+## How high a cell's ground reaches, in steps: a ramp counts at its top
+## (so a ramp climbing up beside a corner doesn't make it drop away).
+func _top_steps(c: Vector2i) -> int:
+	var h := _height(c)
+	if h < 0 or kind[c.y * size.x + c.x] != Kind.RAMP:
+		return h
+	if not ramps.has(c):
+		_find_ramp_exposed(c)
+	return roundi((ramps[c].base + ramps[c].rise) * 2.0)
+
+
 func _height(c: Vector2i) -> int:
 	if c.x < 0 or c.y < 0 or c.x >= size.x or c.y >= size.y:
 		return -99
@@ -261,7 +272,7 @@ func _piece(c: Vector2i, q: Vector2i) -> Array:
 	# Rule: an inside corner where both sides are level with c (a ramp up
 	# to c counts) and the diagonal drops away.
 	var h := _height(c)
-	var dh := _height(c + q)
+	var dh := _top_steps(c + q)
 	if dh != -99 and dh < h and kind[c.y * size.x + c.x] != Kind.RAMP \
 			and _level_with(c + Vector2i(q.x, 0), c) and _level_with(c + Vector2i(0, q.y), c):
 		return [Piece.JOINT if _diagonal_meets(c, q) else Piece.INNER, false]
@@ -296,8 +307,13 @@ func _cell(c: Vector2i) -> void:
 	var base: int = GridWorld.Tex.CLIFF_EDGE if _cliffy(c) else GridWorld.Tex.EARTH_EDGE
 	var joint: int = GridWorld.Tex.CLIFF_JOINT if _cliffy(c) else GridWorld.Tex.EARTH_JOINT
 	var tee: int = GridWorld.Tex.CLIFF_TEE if _cliffy(c) else GridWorld.Tex.EARTH_TEE
-	var top_tex: int = GridWorld.Tex.ROCK_TOP if world.get_cell_item(Vector3i(c.x, (heights[i] - 1) / 2, c.y)) == T.ROCK \
-		else GridWorld.Tex.GRASS
+	var top_tex := GridWorld.Tex.GRASS
+	if raised and _rocky(heights[i]):
+		# Bare rock on high ground, with rock (not grass) inside the band.
+		base = GridWorld.Tex.ROCK_EDGE
+		joint = GridWorld.Tex.ROCK_JOINT
+		tee = GridWorld.Tex.ROCK_TEE
+		top_tex = GridWorld.Tex.ROCK_TOP
 	for q in GridWorld.DIAGONAL:
 		var p: Array = _piece(c, q)
 		var piece: int = p[0]
@@ -345,6 +361,11 @@ func _sides(c: Vector2i, raised: bool) -> void:
 			var a := mid if half == 1 else mid - t * 0.5
 			var b := mid + t * 0.5 if half == 1 else mid
 			_face(a, b, o, solid[i], bottom, tex)
+
+## Whether ground this high (in steps) is bare rock.
+static func _rocky(steps: int) -> bool:
+	return steps >= GridWorld.ROCK_LEVEL * 2
+
 
 ## Whether c's cliff on side d is an HGSS-style bank: a block high, with a
 ## bank at its foot.
@@ -474,10 +495,12 @@ func _wedge(c: Vector2i) -> void:
 	var p1 := center + Vector2(-s.x, s.y) * 0.5
 	var solid_corner := center + s * 0.5
 	var open_corner := center - s * 0.5
-	var top_tex := GridWorld.Tex.GRASS
+	var top_tex := GridWorld.Tex.ROCK_TOP if _rocky(low) else GridWorld.Tex.GRASS
 	# The top: the diagonal piece, drawn with its solid corner top-left
 	# (north-west), mirrored to this wedge's.
 	var diag: int = GridWorld.Tex.CLIFF_DIAG if _cliffy(c) else GridWorld.Tex.EARTH_DIAG
+	if _rocky(h):
+		diag = GridWorld.Tex.ROCK_DIAG
 	var tri := [solid_corner, p0, p1]
 	var tri_uvs := []
 	for p in tri:

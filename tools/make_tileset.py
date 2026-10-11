@@ -11,7 +11,7 @@ Writes assets/tileset.png. The tile order must match GridWorld.Tex.
 from PIL import Image
 
 T = 16
-COLS, ROWS = 4, 10
+COLS, ROWS = 4, 11
 
 GRASS = (118, 150, 74)
 GRASS_DARK = (84, 116, 58)
@@ -329,21 +329,34 @@ def earth_side(px, ox, oy):
 # Edge pieces also run the band across the whole tile width, for diagonal
 # cliffs.
 
-def _band_color(depth, rim, at_edge):
+# What a cliff-top piece's inside is: grass, or bare rock on high ground
+# (with a rock fringe instead of a grass one).
+GRASS_TOP = {"fringe": (GRASS_DARK, GRASS_EDGE)}
+ROCK_TOP_ = {"fringe": (ROCK_MID, ROCK_DARK)}
+
+
+def _top_fill(px, ox, oy, top):
+    if top is ROCK_TOP_:
+        rock_top(px, ox, oy)
+    else:
+        fill(px, ox, oy, GRASS)
+
+
+def _band_color(depth, rim, at_edge, top=GRASS_TOP):
     """depth: px out from the grass. rim: the rock or earth ramp (base,
     shade, highlight). at_edge: on the cell's outer edge, where the face
     below begins."""
     if depth < 1:
-        return GRASS_DARK
+        return top["fringe"][0]
     if depth < 2:
-        return GRASS_EDGE
+        return top["fringe"][1]
     if at_edge:
         return rim[2]
     return rim[0] if depth < 3 else rim[1]
 
 
-def _cliff_piece(px, ox, oy, kind, rim):
-    fill(px, ox, oy, GRASS)
+def _cliff_piece(px, ox, oy, kind, rim, top=GRASS_TOP):
+    _top_fill(px, ox, oy, top)
     for y in range(8, T):
         for x in range(0 if kind == "edge" else 8, T):
             lx, ly = x - 8 + 0.5, y - 8 + 0.5
@@ -367,22 +380,22 @@ def _cliff_piece(px, ox, oy, kind, rim):
                     at_edge = depth >= 4
                 else:
                     at_edge = y == T - 1 or (kind != "edge" and x == T - 1)
-                put(px, ox, oy, x, y, _band_color(depth, rim, at_edge))
+                put(px, ox, oy, x, y, _band_color(depth, rim, at_edge, top))
     # Speckles in the rim.
     for x, y in [(9, 14), (13, 13), (3, 14), (11, 15)]:
         if px[ox + x, oy + y] == rim[1]:
             put(px, ox, oy, x, y, ROCK_MID if rim[0] == ROCK else ROCK_DARK)
 
 
-def _diagonal_piece(px, ox, oy, kind, rim):
+def _diagonal_piece(px, ox, oy, kind, rim, top=GRASS_TOP):
     """Diagonal cliffs. DIAG: a wedge's top, its solid corner top-left and
     the cliff running from the bottom-left corner to the top-right, the
     band along it measured in rows (and columns), so it meets the straight
     edge pieces on either side exactly. JOINT: the south-east quarter of
     the cell in the crook between two wedges, where the band carries on
     through its corner."""
-    fill(px, ox, oy, GRASS)
-    colors = {0: rim[2], 1: rim[1], 2: rim[0], 3: GRASS_EDGE, 4: GRASS_DARK}
+    _top_fill(px, ox, oy, top)
+    colors = {0: rim[2], 1: rim[1], 2: rim[0], 3: top["fringe"][1], 4: top["fringe"][0]}
     for y in range(T):
         for x in range(T):
             if kind == "diag":
@@ -395,13 +408,13 @@ def _diagonal_piece(px, ox, oy, kind, rim):
                 put(px, ox, oy, x, y, colors[max(dv, 0)])
 
 
-def _tee_piece(px, ox, oy, rim):
+def _tee_piece(px, ox, oy, rim, top=GRASS_TOP):
     """A T-junction: the south-east quarter of a cliff top whose south and
     east sides both drop away, where the cliff along the south carries on
     past the corner at a lower level. Square, not rounded: the band along
     the east side runs into the band along the south, which runs on."""
-    fill(px, ox, oy, GRASS)
-    colors = {0: rim[2], 1: rim[1], 2: rim[0], 3: GRASS_EDGE, 4: GRASS_DARK}
+    _top_fill(px, ox, oy, top)
+    colors = {0: rim[2], 1: rim[1], 2: rim[0], 3: top["fringe"][1], 4: top["fringe"][0]}
     for y in range(8, T):
         for x in range(8, T):
             d = min(15 - x, 15 - y)
@@ -420,6 +433,13 @@ def earth_edge(px, ox, oy): _cliff_piece(px, ox, oy, "edge", EARTH_RIM)
 def earth_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", EARTH_RIM)
 def earth_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", EARTH_RIM)
 def cliff_tee(px, ox, oy): _tee_piece(px, ox, oy, CLIFF_RIM)
+# The same pieces on bare-rock high ground.
+def rock_edge(px, ox, oy): _cliff_piece(px, ox, oy, "edge", CLIFF_RIM, ROCK_TOP_)
+def rock_outer(px, ox, oy): _cliff_piece(px, ox, oy, "outer", CLIFF_RIM, ROCK_TOP_)
+def rock_inner(px, ox, oy): _cliff_piece(px, ox, oy, "inner", CLIFF_RIM, ROCK_TOP_)
+def rock_joint(px, ox, oy): _diagonal_piece(px, ox, oy, "joint", CLIFF_RIM, ROCK_TOP_)
+def rock_tee(px, ox, oy): _tee_piece(px, ox, oy, CLIFF_RIM, ROCK_TOP_)
+def rock_diag(px, ox, oy): _diagonal_piece(px, ox, oy, "diag", CLIFF_RIM, ROCK_TOP_)
 def earth_tee(px, ox, oy): _tee_piece(px, ox, oy, EARTH_RIM)
 def cliff_diag(px, ox, oy): _diagonal_piece(px, ox, oy, "diag", CLIFF_RIM)
 def cliff_joint(px, ox, oy): _diagonal_piece(px, ox, oy, "joint", CLIFF_RIM)
@@ -506,7 +526,8 @@ TILES = [grass, grass_side, dirt, path, flowers, stone, planks, tilled, tilled_w
          cliff_edge, cliff_outer, cliff_inner, earth_edge, earth_outer, earth_inner,
          grass_edge, grass_outer, grass_inner, rock_top,
          cliff_diag, cliff_joint, earth_diag, earth_joint, bank_rock,
-         cliff_tee, earth_tee]
+         cliff_tee, earth_tee,
+         rock_edge, rock_outer, rock_inner, rock_joint, rock_tee, rock_diag]
 
 img = Image.new("RGB", (T * COLS, T * ROWS), CLEAR)
 pixels = img.load()

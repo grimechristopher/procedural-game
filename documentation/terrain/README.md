@@ -51,10 +51,15 @@ tileset's cliff set does:
    free-standing rounded corner.
 3. With **neither**, it's an **inner corner** if the diagonal drops away
    and both sides are level with the cell. A ramp leading up onto the
-   cell counts as level, and a side that's higher rules it out. If a
+   cell counts as level, and a side that's higher rules it out. A ramp on
+   the diagonal counts at its top, so a wide ramp beside the cell doesn't
+   make inner corners along it; nor does a ramp cell get them. If a
    diagonal cliff ends at that corner, it's a **joint** instead, carrying
    the diagonal's band through.
 4. Otherwise it's plain ground.
+
+High ground (five blocks up and more) is bare rock: its pieces are the
+rock versions, with no grass in them.
 
 Ramps take part like any other cell, their pieces draped over the slope.
 Faces hang below every edge: vertical, a bank across the cell in front, or

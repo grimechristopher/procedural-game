@@ -123,9 +123,11 @@ enum Tex {
 	# Square cliff-top corners where a cliff line carries on past an outside
 	# corner at a lower level (see TerrainMesh).
 	CLIFF_TEE, EARTH_TEE,
+	# The cliff-top pieces on bare-rock high ground: rock inside the band.
+	ROCK_EDGE, ROCK_OUTER, ROCK_INNER, ROCK_JOINT, ROCK_TEE, ROCK_DIAG,
 }
 const TEX_COLS := 4
-const TEX_ROWS := 10
+const TEX_ROWS := 11
 
 const TILESET := preload("res://assets/tileset.png")
 const BLOCK_SHADER := preload("res://assets/block.gdshader")

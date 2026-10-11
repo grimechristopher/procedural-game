@@ -120,8 +120,8 @@ overworld tutorial:
 ## Tileset (`assets/tileset.png`)
 
 - **16×16 tiles in a 4-column atlas**, read left to right, top to bottom, in
-  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×10 tiles
-  (64×160 px).
+  the order of `GridWorld.Tex` (`scripts/world.gd`). Currently 4×11 tiles
+  (64×176 px).
 - Every tile must **tile seamlessly**: big faces (buildings) repeat tiles
   across themselves.
 - Wall tiles hang from the top edge of the face they're on, so put features
@@ -177,6 +177,10 @@ along the edge below a wavy grass fringe, and runs on down the face.
 - `DIRT`: the rock face of full cliffs, one tile per block, drawn as
   horizontal strata. Its top row carries on from the band above.
 - `ROCK_TOP`: bare rock seen from above, topping high ground.
+- `ROCK_EDGE`, `ROCK_OUTER`, `ROCK_INNER`, `ROCK_JOINT`, `ROCK_TEE`,
+  `ROCK_DIAG`: the cliff pieces again for high ground, which is bare rock
+  on top: same layout and band, but with `ROCK_TOP` where the grass would
+  be and a fringe of loose, lighter rock instead of the grass fringe.
 - `BANK_ROCK`: the rock of an HGSS-style bank, laid along the slope with
   its top edge (row 0) at the cliff's top and row 15 at the foot of the
   cell in front: fine strata running along the slope, lit near the top
